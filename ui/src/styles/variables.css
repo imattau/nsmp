@@ -1,0 +1,42 @@
+:root {
+  /* Sidebar */
+  --sidebar-bg: #18181b;
+  --sidebar-hover: #27272a;
+  --sidebar-active: #3f3f46;
+  --sidebar-width: 320px;
+
+  /* Chat area */
+  --chat-bg: #09090b;
+  --chat-header-bg: #18181b;
+  --chat-header-height: 56px;
+
+  /* Bubbles */
+  --bubble-sent-bg: linear-gradient(135deg, #2b5278, #8774e1);
+  --bubble-sent-text: #ffffff;
+  --bubble-received-bg: #1f1f23;
+  --bubble-received-text: #ffffff;
+  --bubble-radius: 18px;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #52525b;
+
+  /* Input */
+  --input-bg: #18181b;
+  --input-border: #3f3f46;
+  --input-radius: 24px;
+
+  /* Accent */
+  --accent: #8774e1;
+  --accent-hover: #6d5dcf;
+  --accent-glow: rgba(135, 116, 225, 0.15);
+
+  /* Borders */
+  --border-subtle: #27272a;
+  --border-radius: 12px;
+
+  /* Sizing */
+  --avatar-size: 40px;
+  --avatar-small: 32px;
+}
