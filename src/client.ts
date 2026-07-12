@@ -107,7 +107,7 @@ export class Client {
     const shardLabel = event.tags.find((t) => t[0] === 'shard')?.[1]
     if (!shardLabel) return
 
-    const cacheKey = `${event.pubkey}:${payload.shard_labels['1']}`
+    const cacheKey = `${payload.conversation_id ?? payload.shard_labels['1']}:${payload.shard_labels['1']}`
     if (!this.shardCache.has(cacheKey)) {
       this.shardCache.set(cacheKey, new Map())
       this.firstEvent.set(cacheKey, event)
