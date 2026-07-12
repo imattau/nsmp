@@ -76,7 +76,7 @@ export function subscribeToPubkey(
 export async function queryEvents(
   relayUrl: string,
   filter: Record<string, unknown>,
-  timeoutMs = 5000,
+  timeoutMs = 2000,
 ): Promise<SignedEvent[]> {
   return new Promise((resolve, reject) => {
     const ws = new globalThis.WebSocket(relayUrl)

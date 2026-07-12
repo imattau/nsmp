@@ -26,7 +26,7 @@ interface GeorelaysResponse {
   timestamp?: string
 }
 
-export async function fetchFromTrustedRelays(timeoutMs = 10000): Promise<RelayEntry[]> {
+export async function fetchFromTrustedRelays(timeoutMs = 4000): Promise<RelayEntry[]> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -63,7 +63,7 @@ export async function fetchFromTrustedRelays(timeoutMs = 10000): Promise<RelayEn
   }
 }
 
-export async function fetchFromGeorelays(timeoutMs = 10000): Promise<RelayEntry[]> {
+export async function fetchFromGeorelays(timeoutMs = 4000): Promise<RelayEntry[]> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
