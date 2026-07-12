@@ -31,10 +31,17 @@
   },
   "keywords": [
     "nostr",
-    "messaging",
-    "protocol",
+    "nsmp",
+    "stealth-messaging",
+    "metadata-resistant",
+    "forward-secrecy",
+    "relay-hopping",
+    "encrypted-messaging",
+    "nip-44",
     "privacy",
-    "stealth"
+    "pwa",
+    "passkey",
+    "webauthn"
   ],
-  "license": "MIT"
+  "license": "LGPL-3.0-only"
 }
