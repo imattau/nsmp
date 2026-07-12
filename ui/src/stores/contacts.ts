@@ -160,12 +160,13 @@ function syncConversationsFromContacts(): void {
   const map = convSignal.value
   let changed = false
   for (const contact of contacts.value) {
-    const conv = map.get(contact.pubkey)
-    if (conv) {
-      const newName = contact.displayName || contact.petname || conv.recipientName
-      if (newName !== conv.recipientName || contact.picture !== conv.recipientPicture) {
-        map.set(contact.pubkey, { ...conv, recipientName: newName, recipientPicture: contact.picture })
-        changed = true
+    for (const [id, conv] of map) {
+      if (conv.recipientPubkey === contact.pubkey) {
+        const newName = contact.displayName || contact.petname || conv.recipientName
+        if (newName !== conv.recipientName || contact.picture !== conv.recipientPicture) {
+          map.set(id, { ...conv, recipientName: newName, recipientPicture: contact.picture })
+          changed = true
+        }
       }
     }
   }
