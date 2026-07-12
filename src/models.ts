@@ -3,6 +3,12 @@ export interface KeyPair {
   publicKey: string
 }
 
+export interface SyncMessage {
+  sender_msg_index: number
+  content: string
+  timestamp: number
+}
+
 export interface ShardPayload {
   shard_index: number
   shard_total: number
@@ -16,6 +22,10 @@ export interface ShardPayload {
     sender: string
     recipient: string
   }
+  sender_msg_index?: number
+  sync?: 
+    | { type: 'request'; last_seen_index: number }
+    | { type: 'bundle'; messages: SyncMessage[] }
 }
 
 export interface SignedEvent {

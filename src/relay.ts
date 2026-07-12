@@ -1,15 +1,18 @@
+import { SimplePool } from 'nostr-tools'
+import type { Filter, Event as NostrEvent } from 'nostr-tools'
 import type { SignedEvent } from './models.js'
 
-function WS(url: string): WebSocket {
-  if (typeof globalThis.WebSocket !== 'undefined') {
-    return new globalThis.WebSocket(url)
-  }
-  throw new Error('WebSocket is not available in this environment')
+const pool = new SimplePool()
+
+pool.enableReconnect = true
+
+export function closePool(): void {
+  pool.close([])
 }
 
 export function publishEvent(relayUrl: string, event: SignedEvent): Promise<void> {
   return new Promise((resolve, reject) => {
-    const ws = WS(relayUrl)
+    const ws = new globalThis.WebSocket(relayUrl)
 
     const timer = setTimeout(() => {
       ws.close()
@@ -54,38 +57,20 @@ export function subscribeToPubkey(
   onEvent: (event: SignedEvent) => void,
   kinds?: number[],
 ): () => void {
-  const ws = WS(relayUrl)
-  const subId = Math.random().toString(36).slice(2, 10)
+  const filter: Record<string, unknown> = { '#p': [pubkey] }
+  if (kinds) filter.kinds = kinds
 
-  ws.addEventListener('open', () => {
-    const filter: Record<string, unknown> = { '#p': [pubkey] }
-    if (kinds) filter.kinds = kinds
-    ws.send(JSON.stringify(['REQ', subId, filter]))
-  })
+  const sub = pool.subscribe(
+    [relayUrl],
+    filter as Filter,
+    {
+      onevent(event: NostrEvent) {
+        onEvent(event as unknown as SignedEvent)
+      },
+    },
+  )
 
-  ws.addEventListener('message', (raw: MessageEvent) => {
-    try {
-      const data = JSON.parse(raw.data as string)
-      if (data[0] === 'EVENT' && data[1] === subId) {
-        onEvent(data[2] as SignedEvent)
-      }
-    } catch {
-      // ignore
-    }
-  })
-
-  ws.addEventListener('error', () => {
-    // subscription lost; client should reconnect
-  })
-
-  return () => {
-    try {
-      ws.send(JSON.stringify(['CLOSE', subId]))
-    } catch {
-      // ignore
-    }
-    ws.close()
-  }
+  return () => sub.close()
 }
 
 export async function queryEvents(
@@ -94,7 +79,7 @@ export async function queryEvents(
   timeoutMs = 5000,
 ): Promise<SignedEvent[]> {
   return new Promise((resolve, reject) => {
-    const ws = WS(relayUrl)
+    const ws = new globalThis.WebSocket(relayUrl)
     const subId = Math.random().toString(36).slice(2, 10)
     const events: SignedEvent[] = []
 

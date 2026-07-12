@@ -1,6 +1,6 @@
 import { finalizeEvent } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
-import type { KeyPair, ShardPayload, ShardEvent, SignedEvent } from './models.js'
+import type { KeyPair, ShardPayload, ShardEvent, SignedEvent, SyncMessage } from './models.js'
 import { encrypt } from './crypto.js'
 
 const LABEL_LENGTH = 5
@@ -27,6 +27,10 @@ export function buildPayload(params: {
   nextTargets: string[]
   conversationId?: string
   conversation?: { sender: string; recipient: string }
+  senderMsgIndex?: number
+  sync?: 
+    | { type: 'request'; last_seen_index: number }
+    | { type: 'bundle'; messages: SyncMessage[] }
 }): ShardPayload {
   return {
     shard_index: params.shardIndex,
@@ -38,6 +42,8 @@ export function buildPayload(params: {
     next_targets: params.nextTargets,
     ...(params.conversationId ? { conversation_id: params.conversationId } : {}),
     ...(params.conversation ? { conversation: params.conversation } : {}),
+    ...(params.senderMsgIndex !== undefined ? { sender_msg_index: params.senderMsgIndex } : {}),
+    ...(params.sync ? { sync: params.sync } : {}),
   }
 }
 

@@ -4,7 +4,7 @@ import { useComputed, useSignalEffect } from '@preact/signals'
 import { conversations, activeConversationId, selectConversation } from '../stores/conversations.js'
 import { fetchContacts } from '../stores/contacts.js'
 import { authState } from '../stores/auth.js'
-import { sendNSMP } from '../nsmp/bridge.js'
+import { sendNSMP, requestSync } from '../nsmp/bridge.js'
 import { Avatar } from '../components/Avatar.js'
 import { ChatList } from '../components/ChatList.js'
 import { MessageThread } from '../components/MessageThread.js'
@@ -113,7 +113,7 @@ export function ChatPage() {
                 <div class="chat-header-status">NSMP encrypted</div>
               </div>
               <div class="chat-header-spacer" />
-              <button class="icon-btn" title="Info">ⓘ</button>
+              <button class="icon-btn" onClick={() => requestSync(activeConv.id)} title="Request sync">🔄</button>
             </div>
             <MessageThread />
             <MessageInput onSend={handleSend} />

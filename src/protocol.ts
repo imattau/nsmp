@@ -1,6 +1,6 @@
 import { finalizeEvent } from 'nostr-tools'
 import { randomBytes, bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
-import type { KeyPair, ShardPayload, ShardEvent, SignedEvent } from './models.js'
+import type { KeyPair, ShardPayload, ShardEvent, SignedEvent, SyncMessage } from './models.js'
 import { generateKeypair, TempKeyStore } from './key.js'
 import { encrypt, decrypt } from './crypto.js'
 import { generateShardLabels, buildPayload, createShards, findShardIndex } from './shard.js'
@@ -13,6 +13,11 @@ function generateConversationId(): string {
 
 const KIND = 1059
 
+function basePayload(payload: ShardPayload): Omit<ShardPayload, 'shard_index'> {
+  const { shard_index, ...rest } = payload
+  return rest
+}
+
 export function sendMessage(params: {
   recipientCurrentPubkey: string
   plaintext: string
@@ -22,8 +27,9 @@ export function sendMessage(params: {
   recipientRealNpub: string
   relayPool: string[]
   conversationId?: string
+  msgIndex?: number
 }): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string } {
-  const { recipientCurrentPubkey, plaintext, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId: existingId } = params
+  const { recipientCurrentPubkey, plaintext, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId: existingId, msgIndex } = params
 
   const conversationId = existingId ?? generateConversationId()
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
@@ -40,21 +46,11 @@ export function sendMessage(params: {
     nextTargets: replyTargetsPubs,
     conversationId,
     conversation: { sender: myRealNpub, recipient: recipientRealNpub },
+    senderMsgIndex: msgIndex,
   })
 
-  const basePayload = {
-    shard_total: payload.shard_total,
-    content: payload.content,
-    shard_labels: payload.shard_labels,
-    peer_relays: payload.peer_relays,
-    next_relays: payload.next_relays,
-    next_targets: payload.next_targets,
-    conversation_id: payload.conversation_id,
-    conversation: payload.conversation,
-  }
-
   const shardEvents = createShards({
-    payload: basePayload,
+    payload: basePayload(payload),
     senderKey,
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
@@ -142,8 +138,9 @@ export function buildReply(params: {
   myRealNpub: string
   recipientRealNpub: string
   relayPool: string[]
+  msgIndex?: number
 }): { shardEvents: ShardEvent[]; nextTargets: KeyPair[]; nextRelays: string[] } {
-  const { originalPayload, replyText, senderKey, myRealNpub, recipientRealNpub, relayPool } = params
+  const { originalPayload, replyText, senderKey, myRealNpub, recipientRealNpub, relayPool, msgIndex } = params
 
   const nextTargets = originalPayload.next_targets
   const nextRelays = originalPayload.next_relays
@@ -166,24 +163,14 @@ export function buildReply(params: {
     nextTargets: myNextTargetsPubs,
     conversationId,
     conversation: { sender: myRealNpub, recipient: recipientRealNpub },
+    senderMsgIndex: msgIndex,
   })
-
-  const basePayload = {
-    shard_total: payload.shard_total,
-    content: payload.content,
-    shard_labels: payload.shard_labels,
-    peer_relays: payload.peer_relays,
-    next_relays: payload.next_relays,
-    next_targets: payload.next_targets,
-    conversation_id: payload.conversation_id,
-    conversation: payload.conversation,
-  }
 
   const skBytes = hexToBytes(senderKey.privateKey)
   const shardEvents: ShardEvent[] = []
   for (let i = 0; i < 3; i++) {
     const targetPub = nextTargets[permutation[i]]
-    const fullPayload: ShardPayload = { ...basePayload, shard_index: i + 1 }
+    const fullPayload: ShardPayload = { ...basePayload(payload), shard_index: i + 1 }
     const ciphertext = encrypt(
       JSON.stringify(fullPayload),
       senderKey.privateKey,
@@ -207,4 +194,82 @@ export function buildReply(params: {
   }
 
   return { shardEvents, nextTargets: myNextTargets, nextRelays: myNextRelays }
+}
+
+export function buildSyncRequest(params: {
+  lastSeenIndex: number
+  recipientCurrentPubkey: string
+  currentRelays: string[]
+  senderKey: KeyPair
+  myRealNpub: string
+  recipientRealNpub: string
+  relayPool: string[]
+  conversationId: string
+}): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
+  const { lastSeenIndex, recipientCurrentPubkey, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+
+  const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
+  const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
+  const nextRelays = chooseNextRelays(currentRelays, relayPool)
+  const labels = generateShardLabels()
+
+  const payload = buildPayload({
+    shardIndex: 1,
+    content: '',
+    shardLabels: { '1': labels[0], '2': labels[1], '3': labels[2] },
+    peerRelays: currentRelays,
+    nextRelays,
+    nextTargets: replyTargetsPubs,
+    conversationId,
+    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
+    sync: { type: 'request', last_seen_index: lastSeenIndex },
+  })
+
+  const shardEvents = createShards({
+    payload: basePayload(payload),
+    senderKey,
+    recipientPubkey: recipientCurrentPubkey,
+    currentRelays,
+  })
+
+  return { shardEvents, replyTargets, nextRelays }
+}
+
+export function buildSyncBundle(params: {
+  messages: SyncMessage[]
+  recipientCurrentPubkey: string
+  currentRelays: string[]
+  senderKey: KeyPair
+  myRealNpub: string
+  recipientRealNpub: string
+  relayPool: string[]
+  conversationId: string
+}): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
+  const { messages, recipientCurrentPubkey, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+
+  const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
+  const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
+  const nextRelays = chooseNextRelays(currentRelays, relayPool)
+  const labels = generateShardLabels()
+
+  const payload = buildPayload({
+    shardIndex: 1,
+    content: '',
+    shardLabels: { '1': labels[0], '2': labels[1], '3': labels[2] },
+    peerRelays: currentRelays,
+    nextRelays,
+    nextTargets: replyTargetsPubs,
+    conversationId,
+    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
+    sync: { type: 'bundle', messages },
+  })
+
+  const shardEvents = createShards({
+    payload: basePayload(payload),
+    senderKey,
+    recipientPubkey: recipientCurrentPubkey,
+    currentRelays,
+  })
+
+  return { shardEvents, replyTargets, nextRelays }
 }

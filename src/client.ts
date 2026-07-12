@@ -1,7 +1,7 @@
-import type { KeyPair, ShardPayload, SignedEvent, Subscription } from './models.js'
+import type { KeyPair, ShardPayload, SignedEvent, Subscription, SyncMessage } from './models.js'
 import { TempKeyStore, generateKeypair } from './key.js'
-import { sendMessage, processEvent, fetchMissingShards } from './protocol.js'
-import { publishEvent, subscribeToPubkey } from './relay.js'
+import { sendMessage, buildReply, buildSyncRequest, buildSyncBundle, processEvent, fetchMissingShards } from './protocol.js'
+import { publishEvent, subscribeToPubkey, queryEvents, closePool } from './relay.js'
 import { bootstrapRelays } from './pool.js'
 
 const KIND_NSMP = 1059
@@ -16,7 +16,7 @@ export class Client {
 
   private mainKey: KeyPair
   private myRealNpub: string
-  private onMessageCallback?: (payload: ShardPayload) => void
+  private onMessageCallback?: (payload: ShardPayload, matchedPubkey: string) => void
 
   constructor(mainKey: KeyPair, relayPool?: string[]) {
     this.mainKey = mainKey
@@ -25,7 +25,11 @@ export class Client {
     this.relayPool = relayPool ?? bootstrapRelays()
   }
 
-  setMessageCallback(cb: (payload: ShardPayload) => void): void {
+  getRelayPool(): string[] {
+    return this.relayPool
+  }
+
+  setMessageCallback(cb: (payload: ShardPayload, matchedPubkey: string) => void): void {
     this.onMessageCallback = cb
   }
 
@@ -63,6 +67,9 @@ export class Client {
 
   private completeMessage(cacheKey: string, cache: Map<number, ShardPayload>): void {
     const fullPayload = cache.get(1) ?? cache.get(2) ?? cache.get(3)!
+    const firstEvent = this.firstEvent.get(cacheKey)
+    const matchedPubkey = firstEvent?.tags.find((t) => t[0] === 'p')?.[1] ?? ''
+
     this.shardCache.delete(cacheKey)
     this.firstEvent.delete(cacheKey)
 
@@ -73,7 +80,7 @@ export class Client {
     }
 
     if (this.onMessageCallback) {
-      this.onMessageCallback(fullPayload)
+      this.onMessageCallback(fullPayload, matchedPubkey)
     }
   }
 
@@ -125,6 +132,93 @@ export class Client {
     }
   }
 
+  async restoreRound(round: {
+    replyTargets: KeyPair[]
+    nextRelays: string[]
+  }): Promise<void> {
+    for (const target of round.replyTargets) {
+      this.myKeys.store(target)
+    }
+    for (const target of round.replyTargets) {
+      await this.subscribeToPubkey(target.publicKey, round.nextRelays)
+    }
+    await this.catchUpMissedEvents(round)
+  }
+
+  private async catchUpMissedEvents(round: {
+    replyTargets: KeyPair[]
+    nextRelays: string[]
+  }): Promise<void> {
+    const promises: Promise<void>[] = []
+    for (const target of round.replyTargets) {
+      for (const relayUrl of round.nextRelays) {
+        promises.push(
+          queryEvents(relayUrl, {
+            kinds: [KIND_NSMP],
+            '#p': [target.publicKey],
+            limit: 100,
+          }).then((events) => {
+            for (const event of events) {
+              this.handleEvent(event)
+            }
+          }).catch(() => {
+            // ignore per-relay query failures during catch-up
+          }),
+        )
+      }
+    }
+    await Promise.allSettled(promises)
+  }
+
+  async sendReply(params: {
+    peerTargets: string[]
+    peerRelays: string[]
+    replyText: string
+    conversationId: string
+    msgIndex?: number
+  }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
+    const senderKey = generateKeypair()
+    const payload = {
+      next_targets: params.peerTargets,
+      next_relays: params.peerRelays,
+      conversation_id: params.conversationId,
+    }
+    const result = buildReply({
+      originalPayload: payload as unknown as ShardPayload,
+      replyText: params.replyText,
+      senderKey,
+      myRealNpub: this.myRealNpub,
+      recipientRealNpub: this.myRealNpub,
+      relayPool: this.relayPool,
+      msgIndex: params.msgIndex,
+    })
+
+    const publishPromises: Promise<void>[] = []
+    for (const shard of result.shardEvents) {
+      for (const relayUrl of shard.relays) {
+        publishPromises.push(
+          publishEvent(relayUrl, shard.signedEvent).catch(() => {
+            // ignore per-shard publish failures
+          }),
+        )
+      }
+    }
+    await Promise.allSettled(publishPromises)
+
+    for (const target of result.nextTargets) {
+      this.myKeys.store(target)
+    }
+    for (const target of result.nextTargets) {
+      await this.subscribeToPubkey(target.publicKey, result.nextRelays)
+    }
+
+    return {
+      replyTargets: result.nextTargets,
+      nextRelays: result.nextRelays,
+      conversationId: params.conversationId,
+    }
+  }
+
   async send(params: {
     recipientCurrentPubkey: string
     plaintext: string
@@ -132,6 +226,7 @@ export class Client {
     myRealNpub?: string
     recipientRealNpub?: string
     conversationId?: string
+    msgIndex?: number
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
     const relays = params.currentRelays ?? this.relayPool.slice(0, 6)
     const senderKey = generateKeypair()
@@ -144,6 +239,7 @@ export class Client {
       recipientRealNpub: params.recipientRealNpub ?? params.recipientCurrentPubkey,
       relayPool: this.relayPool,
       conversationId: params.conversationId,
+      msgIndex: params.msgIndex,
     })
 
     const publishPromises: Promise<void>[] = []
@@ -172,6 +268,86 @@ export class Client {
     }
   }
 
+  async sendSyncRequest(params: {
+    lastSeenIndex: number
+    recipientCurrentPubkey: string
+    currentRelays: string[]
+    conversationId: string
+  }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
+    const senderKey = generateKeypair()
+    const result = buildSyncRequest({
+      lastSeenIndex: params.lastSeenIndex,
+      recipientCurrentPubkey: params.recipientCurrentPubkey,
+      currentRelays: params.currentRelays,
+      senderKey,
+      myRealNpub: this.myRealNpub,
+      recipientRealNpub: this.myRealNpub,
+      relayPool: this.relayPool,
+      conversationId: params.conversationId,
+    })
+
+    const publishPromises: Promise<void>[] = []
+    for (const shard of result.shardEvents) {
+      for (const relayUrl of shard.relays) {
+        publishPromises.push(
+          publishEvent(relayUrl, shard.signedEvent).catch(() => {
+            // ignore per-shard publish failures
+          }),
+        )
+      }
+    }
+    await Promise.allSettled(publishPromises)
+
+    for (const target of result.replyTargets) {
+      this.myKeys.store(target)
+    }
+    for (const target of result.replyTargets) {
+      await this.subscribeToPubkey(target.publicKey, result.nextRelays)
+    }
+
+    return { replyTargets: result.replyTargets, nextRelays: result.nextRelays }
+  }
+
+  async sendSyncBundle(params: {
+    messages: SyncMessage[]
+    recipientCurrentPubkey: string
+    currentRelays: string[]
+    conversationId: string
+  }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
+    const senderKey = generateKeypair()
+    const result = buildSyncBundle({
+      messages: params.messages,
+      recipientCurrentPubkey: params.recipientCurrentPubkey,
+      currentRelays: params.currentRelays,
+      senderKey,
+      myRealNpub: this.myRealNpub,
+      recipientRealNpub: this.myRealNpub,
+      relayPool: this.relayPool,
+      conversationId: params.conversationId,
+    })
+
+    const publishPromises: Promise<void>[] = []
+    for (const shard of result.shardEvents) {
+      for (const relayUrl of shard.relays) {
+        publishPromises.push(
+          publishEvent(relayUrl, shard.signedEvent).catch(() => {
+            // ignore per-shard publish failures
+          }),
+        )
+      }
+    }
+    await Promise.allSettled(publishPromises)
+
+    for (const target of result.replyTargets) {
+      this.myKeys.store(target)
+    }
+    for (const target of result.replyTargets) {
+      await this.subscribeToPubkey(target.publicKey, result.nextRelays)
+    }
+
+    return { replyTargets: result.replyTargets, nextRelays: result.nextRelays }
+  }
+
   destroyReplyTargets(pubkeys: string[]): void {
     for (const pubkey of pubkeys) {
       this.myKeys.destroy(pubkey)
@@ -189,5 +365,6 @@ export class Client {
     this.shardCache.clear()
     this.firstEvent.clear()
     this.pendingFetches.clear()
+    closePool()
   }
 }

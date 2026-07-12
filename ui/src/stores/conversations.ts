@@ -11,6 +11,9 @@ export interface UIMessage {
   isSent: boolean
   senderPubkey: string
   status?: MessageStatus
+  peerRelays?: string[]
+  peerTargets?: string[]
+  senderMsgIndex?: number
 }
 
 export interface UIConversation {
