@@ -223,6 +223,8 @@ export class Client {
     conversationId: string
     msgIndex?: number
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
+    console.warn('sendReply: replying', params.replyText?.slice(0, 30), 'to targets', params.peerTargets.map((t) => t.slice(0, 8)))
+
     const payload = {
       next_targets: params.peerTargets,
       next_relays: params.peerRelays,
@@ -242,12 +244,18 @@ export class Client {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
           publishEvent(relayUrl, shard.signedEvent)
-            .then(() => this.recordRelaySuccess(relayUrl))
-            .catch(() => this.recordRelayFailure(relayUrl)),
+            .then(() => { console.warn('  reply publish OK to', relayUrl); this.recordRelaySuccess(relayUrl) })
+            .catch((e) => { console.warn('  reply publish FAIL to', relayUrl, e?.message?.slice(0, 50)); this.recordRelayFailure(relayUrl) }),
         )
       }
     }
-    await Promise.allSettled(publishPromises)
+    const publishResults = await Promise.allSettled(publishPromises)
+    const anySuccess = publishResults.some((r) => r.status === 'fulfilled')
+    if (!anySuccess) {
+      console.warn('sendReply: ALL publishes failed')
+      throw new Error('Failed to publish reply to any relay')
+    }
+    console.warn('sendReply: at least one shard published successfully')
 
     for (const target of result.nextTargets) {
       this.myKeys.store(target)
