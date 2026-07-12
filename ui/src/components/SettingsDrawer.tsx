@@ -49,6 +49,20 @@ export function SettingsDrawer({ onClose }: SettingsDrawerProps) {
               <span class="settings-value" style="color: #22c55e;">Connected</span>
             </div>
           </div>
+
+          {auth?.client && (
+            <div class="settings-section">
+              <h4>Relays</h4>
+              <div class="settings-relays">
+                {auth.client.getRelayPool().map((url) => (
+                  <div class="settings-relay-item" key={url}>{url}</div>
+                ))}
+                {auth.client.getRelayPool().length === 0 && (
+                  <div class="settings-relay-item" style="color: var(--text-muted)">No relays connected</div>
+                )}
+              </div>
+            </div>
+          )}
           <button class="settings-logout" onClick={handleLogout}>
             Sign Out
           </button>
