@@ -131,7 +131,7 @@ describe('publishEvent', () => {
     await expect(promise).rejects.toThrow('blocked')
   })
 
-  it('should handle WebSocket error gracefully', async () => {
+  it('should reject on WebSocket error', async () => {
     const event = createMockEvent()
     const promise = publishEvent('wss://relay.example.com', event)
 
@@ -142,8 +142,7 @@ describe('publishEvent', () => {
     const ws = mockWebSocketInstances[0]
     ws._error()
 
-    // Pool handles connection errors gracefully — doesn't throw
-    await expect(promise).resolves.toBeUndefined()
+    await expect(promise).rejects.toThrow('connection failure')
   })
 })
 

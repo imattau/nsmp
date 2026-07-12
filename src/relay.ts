@@ -22,7 +22,11 @@ export function trustUrlForTesting(url: string): void {
 }
 
 export function publishEvent(relayUrl: string, event: SignedEvent): Promise<void> {
-  return pool.publish([relayUrl], event)[0].then(() => {})
+  return pool.publish([relayUrl], event)[0].then((result) => {
+    if (typeof result === 'string' && result.startsWith('connection failure')) {
+      throw new Error(result)
+    }
+  })
 }
 
 export function subscribeToPubkey(

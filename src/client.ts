@@ -264,7 +264,11 @@ export class Client {
         )
       }
     }
-    await Promise.allSettled(publishPromises)
+    const publishResults = await Promise.allSettled(publishPromises)
+    const anySuccess = publishResults.some((r) => r.status === 'fulfilled')
+    if (!anySuccess) {
+      throw new Error('Failed to publish to any relay')
+    }
 
     for (const target of result.replyTargets) {
       this.myKeys.store(target)
