@@ -100,7 +100,10 @@ export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<
   const relayPool = new RelayPool()
   client = new Client(keypair, relayPool)
   if (nip07Signer?.nip44?.decrypt) {
-    client.setNip44Decrypt(nip07Signer.nip44.decrypt.bind(nip07Signer))
+    console.warn('Setting up nip44 decrypt fallback via NIP-07 extension')
+    client.setNip44Decrypt(
+      (senderPubkey, ciphertext) => nip07Signer.nip44!.decrypt(senderPubkey, ciphertext),
+    )
   }
   await relayPool.seed()
   client.startMaintenance()
