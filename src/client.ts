@@ -81,7 +81,7 @@ export class Client {
       cache.set(p.shard_index, p)
     }
 
-    if (cache.size >= 3) {
+    if (cache.size >= 1) {
       this.completeMessage(cacheKey, cache)
     }
   }
