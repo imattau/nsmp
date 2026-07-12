@@ -108,6 +108,9 @@ export class Client {
   }
 
   private async handleEvent(event: SignedEvent): Promise<void> {
+    if (event.kind === 1059) {
+      console.warn('handleEvent: got kind 1059 event', event.id.slice(0, 8), 'shard tag:', event.tags.find((t) => t[0] === 'shard')?.[1])
+    }
     let payload = processEvent({ event, myKeys: this.myKeys })
 
     if (!payload && this.nip44Decrypt && this.mainKey.privateKey === '') {
@@ -116,8 +119,11 @@ export class Client {
         if (pTag) {
           const decrypted = await this.nip44Decrypt(event.pubkey, event.content)
           payload = JSON.parse(decrypted) as ShardPayload
+          console.warn('nip44 fallback decrypt succeeded for', event.id.slice(0, 8))
         }
-      } catch {}
+      } catch (e) {
+        console.warn('nip44 fallback decrypt failed for', event.id.slice(0, 8), e)
+      }
     }
 
     if (!payload) {
