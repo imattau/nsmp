@@ -21,6 +21,7 @@ export class Client {
   private mainKey: KeyPair
   private myRealNpub: string
   private onMessageCallback?: (payload: ShardPayload, matchedPubkey: string) => void
+  private nip44Decrypt?: (senderPubkey: string, ciphertext: string) => Promise<string>
 
   constructor(mainKey: KeyPair, relayPool?: string[] | RelayPool) {
     this.mainKey = mainKey
@@ -44,6 +45,10 @@ export class Client {
 
   setMessageCallback(cb: (payload: ShardPayload, matchedPubkey: string) => void): void {
     this.onMessageCallback = cb
+  }
+
+  setNip44Decrypt(fn: (senderPubkey: string, ciphertext: string) => Promise<string>): void {
+    this.nip44Decrypt = fn
   }
 
   addRelays(relays: string[]): void {
@@ -102,8 +107,19 @@ export class Client {
     }
   }
 
-  private handleEvent(event: SignedEvent): void {
-    const payload = processEvent({ event, myKeys: this.myKeys })
+  private async handleEvent(event: SignedEvent): Promise<void> {
+    let payload = processEvent({ event, myKeys: this.myKeys })
+
+    if (!payload && this.nip44Decrypt && this.mainKey.privateKey === '') {
+      try {
+        const pTag = event.tags.find((t) => t[0] === 'p')
+        if (pTag) {
+          const decrypted = await this.nip44Decrypt(event.pubkey, event.content)
+          payload = JSON.parse(decrypted) as ShardPayload
+        }
+      } catch {}
+    }
+
     if (!payload) {
       console.warn('processEvent returned null — could not decrypt event', event.id.slice(0, 8))
       return

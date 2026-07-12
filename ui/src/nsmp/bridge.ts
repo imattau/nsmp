@@ -99,6 +99,9 @@ export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<
 
   const relayPool = new RelayPool()
   client = new Client(keypair, relayPool)
+  if (nip07Signer?.nip44?.decrypt) {
+    client.setNip44Decrypt(nip07Signer.nip44.decrypt.bind(nip07Signer))
+  }
   await relayPool.seed()
   client.startMaintenance()
   startRelayWorker()
