@@ -18,10 +18,6 @@ export interface ShardPayload {
   next_relays: string[]
   next_targets: string[]
   conversation_id?: string
-  conversation?: {
-    sender: string
-    recipient: string
-  }
   sender_msg_index?: number
   sync?: 
     | { type: 'request'; last_seen_index: number }

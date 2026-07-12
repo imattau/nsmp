@@ -24,19 +24,18 @@ const RELAY_POOL = [
 ]
 
 describe('End-to-end protocol flow', () => {
-  it('Alice sends → Bob receives and finds all shards from any single shard', () => {
+  it('Alice sends → Bob receives and finds all shards from any single shard', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const currentRelays = RELAY_POOL.slice(0, 6)
     const message = 'Hello Bob, this is a secret NSMP message!'
 
     // --- Alice sends ---
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: message,
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -70,21 +69,22 @@ describe('End-to-end protocol flow', () => {
     // Bob can decrypt any shard
     for (let testShard = 0; testShard < 3; testShard++) {
       const event = result.shardEvents[testShard].signedEvent
-      const payload = processEvent({ event, myKeys: bobKeys })
-      expect(payload).not.toBeNull()
-      expect(payload!.content).toBe(message)
-      expect(payload!.shard_total).toBe(3)
-      expect(payload!.shard_index).toBe(testShard + 1)
-      expect(Object.keys(payload!.shard_labels)).toHaveLength(3)
-      expect(payload!.peer_relays).toHaveLength(6)
-      expect(payload!.next_relays).toHaveLength(6)
-      expect(payload!.next_targets).toHaveLength(3)
+      const r = processEvent({ event, myKeys: bobKeys })
+      expect(r).not.toBeNull()
+      expect(r!.payload.content).toBe(message)
+      expect(r!.payload.shard_total).toBe(3)
+      expect(r!.payload.shard_index).toBe(testShard + 1)
+      expect(Object.keys(r!.payload.shard_labels)).toHaveLength(3)
+      expect(r!.payload.peer_relays).toHaveLength(6)
+      expect(r!.payload.next_relays).toHaveLength(6)
+      expect(r!.payload.next_targets).toHaveLength(3)
     }
 
     // --- Bob finds other shards from any single shard ---
     for (let testShard = 0; testShard < 3; testShard++) {
       const firstEvent = result.shardEvents[testShard].signedEvent
-      const firstPayload = processEvent({ event: firstEvent, myKeys: bobKeys })!
+      const firstRes = processEvent({ event: firstEvent, myKeys: bobKeys })!
+      const firstPayload = firstRes.payload
 
       const shardLabel = firstEvent.tags.find((t) => t[0] === 'shard')?.[1]
       const currentIdx = findShardIndex(shardLabel!, firstPayload.shard_labels)!
@@ -111,8 +111,8 @@ describe('End-to-end protocol flow', () => {
     const allPayloads: ShardPayload[] = []
     for (let i = 0; i < 3; i++) {
       const ev = result.shardEvents[i].signedEvent
-      const p = processEvent({ event: ev, myKeys: bobKeys })!
-      allPayloads.push(p)
+      const r = processEvent({ event: ev, myKeys: bobKeys })!
+      allPayloads.push(r.payload)
     }
 
     // All shards must have identical content, peer_relays, next_relays, next_targets
@@ -131,35 +131,33 @@ describe('End-to-end protocol flow', () => {
     expect(indices).toEqual([1, 2, 3])
   })
 
-  it('Bob replies to Alice with correct target permutation', () => {
+  it('Bob replies to Alice with correct target permutation', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const currentRelays = RELAY_POOL.slice(0, 6)
 
     // Alice sends first message
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Hello Bob!',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
     // Bob processes it
     const bobKeys = new TempKeyStore()
     bobKeys.store(bobKey)
-    const firstPayload = processEvent({
+    const firstRes = processEvent({
       event: result.shardEvents[0].signedEvent,
       myKeys: bobKeys,
     })!
 
     // Bob builds a reply
-    const reply = buildReply({
-      originalPayload: firstPayload,
+    const reply = await buildReply({
+      originalPayload: firstRes.payload,
       replyText: 'Hi Alice!',
-      myRealNpub: bobKey.publicKey,
-      recipientRealNpub: aliceKey.publicKey,
+      myPrivKey: bobKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -194,41 +192,39 @@ describe('End-to-end protocol flow', () => {
 
     for (let i = 0; i < 3; i++) {
       const ev = reply.shardEvents[i].signedEvent
-      const payload = processEvent({ event: ev, myKeys: aliceKeys })
-      expect(payload).not.toBeNull()
-      expect(payload!.content).toBe('Hi Alice!')
-      expect(payload!.shard_total).toBe(3)
+      const r = processEvent({ event: ev, myKeys: aliceKeys })
+      expect(r).not.toBeNull()
+      expect(r!.payload.content).toBe('Hi Alice!')
+      expect(r!.payload.shard_total).toBe(3)
     }
   })
 
-  it('No temp key is reused across rounds', () => {
+  it('No temp key is reused across rounds', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const currentRelays = RELAY_POOL.slice(0, 6)
 
     // Round 1: Alice → Bob
-    const round1 = sendMessage({
+    const round1 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Round 1',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
     // Bob decrypts and replies  
     const bobKeys = new TempKeyStore()
     bobKeys.store(bobKey)
-    const r1Payload = processEvent({
+    const r1Res = processEvent({
       event: round1.shardEvents[0].signedEvent,
       myKeys: bobKeys,
     })!
 
-    const reply1 = buildReply({
-      originalPayload: r1Payload,
+    const reply1 = await buildReply({
+      originalPayload: r1Res.payload,
       replyText: 'Reply 1',
-      myRealNpub: bobKey.publicKey,
-      recipientRealNpub: aliceKey.publicKey,
+      myPrivKey: bobKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -262,27 +258,25 @@ describe('End-to-end protocol flow', () => {
     }).not.toThrow()
   })
 
-  it('Shard labels are random and shard-to-target mapping is permuted', () => {
+  it('Shard labels are random and shard-to-target mapping is permuted', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const currentRelays = RELAY_POOL.slice(0, 6)
 
     // Run the same message twice; shard labels should differ
-    const result1 = sendMessage({
+    const result1 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'test',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
-    const result2 = sendMessage({
+    const result2 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'test',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -293,11 +287,11 @@ describe('End-to-end protocol flow', () => {
     const p1 = processEvent({
       event: result1.shardEvents[0].signedEvent,
       myKeys: bobKeys,
-    })!
+    })!.payload
     const p2 = processEvent({
       event: result2.shardEvents[0].signedEvent,
       myKeys: bobKeys,
-    })!
+    })!.payload
 
     // Labels should differ between runs
     expect(p1.shard_labels).not.toEqual(p2.shard_labels)

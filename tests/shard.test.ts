@@ -30,7 +30,6 @@ describe('buildPayload', () => {
       peerRelays: ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'],
       nextRelays: ['r7', 'r8', 'r9', 'r10', 'r11', 'r12'],
       nextTargets: ['a1', 'a2', 'a3'],
-      conversation: { sender: 'alice', recipient: 'bob' },
     })
     expect(payload.shard_index).toBe(1)
     expect(payload.shard_total).toBe(3)
@@ -39,12 +38,11 @@ describe('buildPayload', () => {
     expect(payload.peer_relays).toHaveLength(6)
     expect(payload.next_relays).toHaveLength(6)
     expect(payload.next_targets).toHaveLength(3)
-    expect(payload.conversation?.sender).toBe('alice')
   })
 })
 
 describe('createShards', () => {
-  it('should create 3 shard events', () => {
+  it('should create 3 shard events', async () => {
     const senderKeys: [KeyPair, KeyPair, KeyPair] = [generateKeypair(), generateKeypair(), generateKeypair()]
     const recipientPubkey = generateKeypair().publicKey
     const labels = generateShardLabels()
@@ -59,9 +57,11 @@ describe('createShards', () => {
       next_targets: ['t1', 't2', 't3'],
     }
 
-    const shards = createShards({
+    const authorKey = generateKeypair()
+    const shards = await createShards({
       payload: basePayload,
       senderKeys,
+      trueAuthorKey: authorKey,
       recipientPubkey,
       currentRelays: relays,
     })
@@ -94,7 +94,6 @@ describe('buildPayload edge cases', () => {
     })
     expect(payload.shard_index).toBe(2)
     expect(payload.conversation_id).toBeUndefined()
-    expect(payload.conversation).toBeUndefined()
   })
 
   it('should build payload with sync and senderMsgIndex', () => {

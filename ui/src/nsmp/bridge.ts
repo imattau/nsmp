@@ -105,15 +105,19 @@ export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<
       (senderPubkey, ciphertext) => nip07Signer.nip44!.decrypt(senderPubkey, ciphertext),
     )
   }
+  if (nip07Signer?.signEvent) {
+    console.warn('Setting up event signer via NIP-07 extension')
+    client.setSigner((event) => nip07Signer.signEvent(event))
+  }
   await relayPool.seed()
   client.startMaintenance()
   startRelayWorker()
 
-  client.setMessageCallback((payload: ShardPayload, matchedPubkey: string) => {
+  client.setMessageCallback((payload: ShardPayload, senderPubkey: string, matchedPubkey: string) => {
     const conversationId = payload.conversation_id ?? 'default'
-    const isSent = payload.conversation?.sender === myPubkey
+    const isSent = senderPubkey === myPubkey
 
-    console.warn('Message received:', { conversationId, isSent, content: payload.content?.slice(0, 30), matchedPubkey: matchedPubkey.slice(0, 12) })
+    console.warn('Message received:', { conversationId, isSent, content: payload.content?.slice(0, 30), senderPubkey: senderPubkey.slice(0, 12), matchedPubkey: matchedPubkey.slice(0, 12) })
 
     // Handle sync messages
     if (payload.sync) {
@@ -139,18 +143,15 @@ export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<
       content: payload.content,
       timestamp: Date.now(),
       isSent,
-      senderPubkey: payload.conversation?.sender ?? '',
+      senderPubkey: senderPubkey,
       status: isSent ? 'sent' : undefined,
       peerRelays: payload.next_relays,
       peerTargets: payload.next_targets,
       senderMsgIndex: payload.sender_msg_index,
     })
 
-    if (payload.conversation?.recipient && payload.conversation?.sender) {
-      const other = isSent ? payload.conversation.recipient : payload.conversation.sender
-      if (other !== myPubkey) {
-        setConversationName(conversationId, other.slice(0, 8) + '...')
-      }
+    if (senderPubkey && senderPubkey !== myPubkey) {
+      setConversationName(conversationId, senderPubkey.slice(0, 8) + '...')
     }
 
     if (!isSent) {

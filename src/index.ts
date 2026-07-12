@@ -85,10 +85,10 @@ program
       client = new Client(keypair, pool)
     }
 
-    client.setMessageCallback((payload) => {
+    client.setMessageCallback((payload, senderPubkey) => {
       console.log('\n=== Message received ===')
       console.log('Content:', payload.content)
-      console.log('From:', payload.conversation?.sender ?? 'unknown')
+      console.log('From:', senderPubkey ?? 'unknown')
       console.log('Shard:', payload.shard_index, '/', payload.shard_total)
       console.log('Next relays:', payload.next_relays)
       console.log('Next targets:', payload.next_targets)

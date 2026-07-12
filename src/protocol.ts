@@ -1,10 +1,9 @@
-import { finalizeEvent } from 'nostr-tools'
-import { randomBytes, bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
+import { randomBytes, bytesToHex } from '@noble/hashes/utils.js'
 import type { KeyPair, ShardPayload, ShardEvent, SignedEvent, SyncMessage } from './models.js'
 import { generateKeypair, TempKeyStore } from './key.js'
-import { encrypt, decrypt } from './crypto.js'
-import { generateShardLabels, buildPayload, createShards, findShardIndex } from './shard.js'
-import { publishEvent, queryEvents } from './relay.js'
+import { generateShardLabels, buildPayload, createShards, createGiftWrapShard, unwrapGiftWrap, findShardIndex } from './shard.js'
+import type { EventSigner } from './shard.js'
+import { queryEvents } from './relay.js'
 import { chooseNextRelays } from './pool.js'
 
 function generateConversationId(): string {
@@ -22,17 +21,17 @@ function threeSenderKeys(): [KeyPair, KeyPair, KeyPair] {
   return [generateKeypair(), generateKeypair(), generateKeypair()]
 }
 
-export function sendMessage(params: {
+export async function sendMessage(params: {
   recipientCurrentPubkey: string
   plaintext: string
   currentRelays: string[]
-  myRealNpub: string
-  recipientRealNpub: string
+  myPrivKey: string
+  mySigner?: EventSigner
   relayPool: string[]
   conversationId?: string
   msgIndex?: number
-}): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string } {
-  const { recipientCurrentPubkey, plaintext, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId: existingId, msgIndex } = params
+}): Promise<{ shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
+  const { recipientCurrentPubkey, plaintext, currentRelays, myPrivKey, mySigner, relayPool, conversationId: existingId, msgIndex } = params
 
   const conversationId = existingId ?? generateConversationId()
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
@@ -48,13 +47,14 @@ export function sendMessage(params: {
     nextRelays,
     nextTargets: replyTargetsPubs,
     conversationId,
-    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
     senderMsgIndex: msgIndex,
   })
 
-  const shardEvents = createShards({
+  const shardEvents = await createShards({
     payload: basePayload(payload),
     senderKeys: threeSenderKeys(),
+    trueAuthorKey: { privateKey: myPrivKey, publicKey: '' },
+    trueAuthorSigner: mySigner,
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })
@@ -65,23 +65,16 @@ export function sendMessage(params: {
 export function processEvent(params: {
   event: SignedEvent
   myKeys: TempKeyStore
-}): ShardPayload | null {
+}): { payload: ShardPayload; senderPubkey: string } | null {
   const { event, myKeys } = params
 
   const pTag = event.tags.find((t) => t[0] === 'p')
   if (!pTag) return null
 
-  const recipientPub = pTag[1]
-  const keyPair = myKeys.get(recipientPub)
+  const keyPair = myKeys.get(pTag[1])
   if (!keyPair) return null
 
-  try {
-    const decrypted = decrypt(event.content, keyPair.privateKey, event.pubkey)
-    const payload: ShardPayload = JSON.parse(decrypted)
-    return payload
-  } catch {
-    return null
-  }
+  return unwrapGiftWrap({ event, recipientPrivateKey: keyPair.privateKey })
 }
 
 export async function fetchMissingShards(params: {
@@ -120,10 +113,11 @@ export async function fetchMissingShards(params: {
           const keyPair = myKeys.get(evPtag[1])
           if (!keyPair) continue
 
-          const decrypted = decrypt(events[0].content, keyPair.privateKey, events[0].pubkey)
-          const payload: ShardPayload = JSON.parse(decrypted)
-          found.push(payload)
-          break
+          const result = unwrapGiftWrap({ event: events[0], recipientPrivateKey: keyPair.privateKey })
+          if (result) {
+            found.push(result.payload)
+            break
+          }
         }
       } catch {
         continue
@@ -134,15 +128,15 @@ export async function fetchMissingShards(params: {
   return found
 }
 
-export function buildReply(params: {
+export async function buildReply(params: {
   originalPayload: ShardPayload
   replyText: string
-  myRealNpub: string
-  recipientRealNpub: string
+  myPrivKey: string
+  mySigner?: EventSigner
   relayPool: string[]
   msgIndex?: number
-}): { shardEvents: ShardEvent[]; nextTargets: KeyPair[]; nextRelays: string[] } {
-  const { originalPayload, replyText, myRealNpub, recipientRealNpub, relayPool, msgIndex } = params
+}): Promise<{ shardEvents: ShardEvent[]; nextTargets: KeyPair[]; nextRelays: string[] }> {
+  const { originalPayload, replyText, myPrivKey, mySigner, relayPool, msgIndex } = params
 
   const nextTargets = originalPayload.next_targets
   const nextRelays = originalPayload.next_relays
@@ -164,32 +158,26 @@ export function buildReply(params: {
     nextRelays: myNextRelays,
     nextTargets: myNextTargetsPubs,
     conversationId,
-    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
     senderMsgIndex: msgIndex,
   })
 
   const senderKeys = threeSenderKeys()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const expiry = String(timestamp + 86400)
   const shardEvents: ShardEvent[] = []
   for (let i = 0; i < 3; i++) {
-    const skBytes = hexToBytes(senderKeys[i].privateKey)
     const targetPub = nextTargets[permutation[i]]
     const fullPayload: ShardPayload = { ...basePayload(payload), shard_index: i + 1 }
-    const ciphertext = encrypt(
-      JSON.stringify(fullPayload),
-      senderKeys[i].privateKey,
-      targetPub,
-    )
-    const unsignedEvent = {
-      kind: 1059,
-      tags: [
-        ['p', targetPub],
-        ['shard', labels[i]],
-        ['expiry', String(Math.floor(Date.now() / 1000) + 86400)],
-      ],
-      content: ciphertext,
-      created_at: Math.floor(Date.now() / 1000),
-    }
-    const signedEvent = finalizeEvent(unsignedEvent, skBytes) as SignedEvent
+    const signedEvent = await createGiftWrapShard({
+      fullPayload,
+      trueAuthorKey: { privateKey: myPrivKey, publicKey: '' },
+      trueAuthorSigner: mySigner,
+      throwawayKey: senderKeys[i],
+      recipientPubkey: targetPub,
+      label: labels[i],
+      expiry,
+      created_at: timestamp,
+    })
     shardEvents.push({
       signedEvent,
       relays: [nextRelays[i * 2], nextRelays[i * 2 + 1]],
@@ -199,16 +187,16 @@ export function buildReply(params: {
   return { shardEvents, nextTargets: myNextTargets, nextRelays: myNextRelays }
 }
 
-export function buildSyncRequest(params: {
+export async function buildSyncRequest(params: {
   lastSeenIndex: number
   recipientCurrentPubkey: string
   currentRelays: string[]
-  myRealNpub: string
-  recipientRealNpub: string
+  myPrivKey: string
+  mySigner?: EventSigner
   relayPool: string[]
   conversationId: string
-}): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
-  const { lastSeenIndex, recipientCurrentPubkey, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+}): Promise<{ shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] }> {
+  const { lastSeenIndex, recipientCurrentPubkey, currentRelays, myPrivKey, mySigner, relayPool, conversationId } = params
 
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
   const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
@@ -223,13 +211,14 @@ export function buildSyncRequest(params: {
     nextRelays,
     nextTargets: replyTargetsPubs,
     conversationId,
-    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
     sync: { type: 'request', last_seen_index: lastSeenIndex },
   })
 
-  const shardEvents = createShards({
+  const shardEvents = await createShards({
     payload: basePayload(payload),
     senderKeys: threeSenderKeys(),
+    trueAuthorKey: { privateKey: myPrivKey, publicKey: '' },
+    trueAuthorSigner: mySigner,
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })
@@ -237,16 +226,16 @@ export function buildSyncRequest(params: {
   return { shardEvents, replyTargets, nextRelays }
 }
 
-export function buildSyncBundle(params: {
+export async function buildSyncBundle(params: {
   messages: SyncMessage[]
   recipientCurrentPubkey: string
   currentRelays: string[]
-  myRealNpub: string
-  recipientRealNpub: string
+  myPrivKey: string
+  mySigner?: EventSigner
   relayPool: string[]
   conversationId: string
-}): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
-  const { messages, recipientCurrentPubkey, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+}): Promise<{ shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] }> {
+  const { messages, recipientCurrentPubkey, currentRelays, myPrivKey, mySigner, relayPool, conversationId } = params
 
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
   const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
@@ -261,13 +250,14 @@ export function buildSyncBundle(params: {
     nextRelays,
     nextTargets: replyTargetsPubs,
     conversationId,
-    conversation: { sender: myRealNpub, recipient: recipientRealNpub },
     sync: { type: 'bundle', messages },
   })
 
-  const shardEvents = createShards({
+  const shardEvents = await createShards({
     payload: basePayload(payload),
     senderKeys: threeSenderKeys(),
+    trueAuthorKey: { privateKey: myPrivKey, publicKey: '' },
+    trueAuthorSigner: mySigner,
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })

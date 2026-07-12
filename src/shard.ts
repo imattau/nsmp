@@ -1,7 +1,9 @@
 import { finalizeEvent } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import type { KeyPair, ShardPayload, ShardEvent, SignedEvent, SyncMessage } from './models.js'
-import { encrypt } from './crypto.js'
+import { encrypt, decrypt } from './crypto.js'
+
+export type EventSigner = (event: { kind: number; tags: string[][]; content: string; created_at: number }) => Promise<SignedEvent>
 
 const LABEL_LENGTH = 5
 const CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -26,7 +28,6 @@ export function buildPayload(params: {
   nextRelays: string[]
   nextTargets: string[]
   conversationId?: string
-  conversation?: { sender: string; recipient: string }
   senderMsgIndex?: number
   sync?: 
     | { type: 'request'; last_seen_index: number }
@@ -41,46 +42,124 @@ export function buildPayload(params: {
     next_relays: params.nextRelays,
     next_targets: params.nextTargets,
     ...(params.conversationId ? { conversation_id: params.conversationId } : {}),
-    ...(params.conversation ? { conversation: params.conversation } : {}),
     ...(params.senderMsgIndex !== undefined ? { sender_msg_index: params.senderMsgIndex } : {}),
     ...(params.sync ? { sync: params.sync } : {}),
   }
 }
 
-export function createShards(params: {
+export function unwrapGiftWrap(params: {
+  event: SignedEvent
+  recipientPrivateKey: string
+}): { payload: ShardPayload; senderPubkey: string } | null {
+  try {
+    const sealJson = decrypt(
+      params.event.content,
+      params.recipientPrivateKey,
+      params.event.pubkey,
+    )
+    const seal = JSON.parse(sealJson) as SignedEvent & { pubkey: string }
+    if (seal.kind !== 13) return null
+
+    const rumorJson = decrypt(
+      seal.content,
+      params.recipientPrivateKey,
+      seal.pubkey,
+    )
+    const rumor = JSON.parse(rumorJson)
+    const payload = JSON.parse(rumor.content) as ShardPayload
+
+    return { payload, senderPubkey: seal.pubkey }
+  } catch {
+    return null
+  }
+}
+
+export async function createGiftWrapShard(params: {
+  fullPayload: ShardPayload
+  trueAuthorKey: KeyPair
+  trueAuthorSigner?: EventSigner
+  throwawayKey: KeyPair
+  recipientPubkey: string
+  label: string
+  expiry: string
+  created_at: number
+}): Promise<SignedEvent> {
+  const rumor = JSON.stringify({
+    kind: 1059,
+    tags: [['p', params.recipientPubkey]],
+    content: JSON.stringify(params.fullPayload),
+    created_at: params.created_at,
+  })
+
+  const encryptedRumor = encrypt(
+    rumor,
+    params.trueAuthorKey.privateKey,
+    params.recipientPubkey,
+  )
+
+  const unsignedSeal = {
+    kind: 13,
+    tags: [],
+    content: encryptedRumor,
+    created_at: params.created_at,
+  }
+  let seal: SignedEvent
+  if (params.trueAuthorSigner) {
+    seal = await params.trueAuthorSigner(unsignedSeal)
+  } else {
+    const sealBytes = hexToBytes(params.trueAuthorKey.privateKey)
+    seal = finalizeEvent(unsignedSeal, sealBytes) as SignedEvent
+  }
+
+  const encryptedSeal = encrypt(
+    JSON.stringify(seal),
+    params.throwawayKey.privateKey,
+    params.recipientPubkey,
+  )
+
+  const unsignedGiftWrap = {
+    kind: 1059,
+    tags: [
+      ['p', params.recipientPubkey],
+      ['shard', params.label],
+      ['expiry', params.expiry],
+    ],
+    content: encryptedSeal,
+    created_at: params.created_at,
+  }
+  const giftWrapBytes = hexToBytes(params.throwawayKey.privateKey)
+  return finalizeEvent(unsignedGiftWrap, giftWrapBytes) as SignedEvent
+}
+
+export async function createShards(params: {
   payload: Omit<ShardPayload, 'shard_index'>
   senderKeys: [KeyPair, KeyPair, KeyPair]
+  trueAuthorKey: KeyPair
+  trueAuthorSigner?: EventSigner
   recipientPubkey: string
   currentRelays: string[]
-}): ShardEvent[] {
-  const { payload, senderKeys, recipientPubkey, currentRelays } = params
+}): Promise<ShardEvent[]> {
+  const { payload, senderKeys, trueAuthorKey, trueAuthorSigner, recipientPubkey, currentRelays } = params
   const events: ShardEvent[] = []
+  const timestamp = Math.floor(Date.now() / 1000)
+  const expiry = String(timestamp + 86400)
 
   for (let i = 0; i < 3; i++) {
-    const skBytes = hexToBytes(senderKeys[i].privateKey)
     const fullPayload: ShardPayload = {
       ...payload,
       shard_index: i + 1,
     }
 
-    const encrypted = encrypt(
-      JSON.stringify(fullPayload),
-      senderKeys[i].privateKey,
+    const signedEvent = await createGiftWrapShard({
+      fullPayload,
+      trueAuthorKey,
+      trueAuthorSigner,
+      throwawayKey: senderKeys[i],
       recipientPubkey,
-    )
-
-    const unsignedEvent = {
-      kind: 1059,
-      tags: [
-        ['p', recipientPubkey],
-        ['shard', payload.shard_labels[String(i + 1)]],
-        ['expiry', String(Math.floor(Date.now() / 1000) + 86400)],
-      ],
-      content: encrypted,
-      created_at: Math.floor(Date.now() / 1000),
-    }
-
-    const signedEvent = finalizeEvent(unsignedEvent, skBytes) as SignedEvent
+      label: payload.shard_labels[String(i + 1)],
+      expiry,
+      created_at: timestamp,
+    })
 
     events.push({
       signedEvent,

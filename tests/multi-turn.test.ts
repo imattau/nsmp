@@ -21,11 +21,12 @@ function pTags(events: { signedEvent: { tags: string[][] } }[]): string[] {
 }
 
 function extractPayload(event: { signedEvent: { pubkey: string; tags: string[][]; content: string } }, keys: TempKeyStore): ShardPayload | null {
-  return processEvent({ event: event.signedEvent as any, myKeys: keys })
+  const r = processEvent({ event: event.signedEvent as any, myKeys: keys })
+  return r ? r.payload : null
 }
 
 describe('Multi-turn conversation (Alice → Bob → Alice → Bob)', () => {
-  it('completes 4 rounds with relay rotation and no main npub leak after round 1', () => {
+  it('completes 4 rounds with relay rotation and no main npub leak after round 1', async () => {
     const aliceMain = generateKeypair()
     const bobMain = generateKeypair()
 
@@ -44,12 +45,11 @@ describe('Multi-turn conversation (Alice → Bob → Alice → Bob)', () => {
     // =========================================================================
     //  ROUND 1: Alice → Bob (Alice's msgIndex = 1)
     // =========================================================================
-    const r1 = sendMessage({
+    const r1 = await sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'Round 1: Hello Bob!',
       currentRelays,
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
       msgIndex: 1,
     })
@@ -71,11 +71,10 @@ describe('Multi-turn conversation (Alice → Bob → Alice → Bob)', () => {
     // =========================================================================
     //  ROUND 2: Bob → Alice reply (Bob's msgIndex = 1)
     // =========================================================================
-    const r2 = buildReply({
+    const r2 = await buildReply({
       originalPayload: r1Payload,
       replyText: 'Round 2: Hi Alice!',
-      myRealNpub: bobMain.publicKey,
-      recipientRealNpub: aliceMain.publicKey,
+      myPrivKey: bobMain.privateKey,
       relayPool: POOL,
       msgIndex: 1,
     })
@@ -99,11 +98,10 @@ describe('Multi-turn conversation (Alice → Bob → Alice → Bob)', () => {
     // =========================================================================
     //  ROUND 3: Alice → Bob reply (Alice's msgIndex = 2)
     // =========================================================================
-    const r3 = buildReply({
+    const r3 = await buildReply({
       originalPayload: r2Payload,
       replyText: 'Round 3: How are you Bob?',
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
       msgIndex: 2,
     })
@@ -127,11 +125,10 @@ describe('Multi-turn conversation (Alice → Bob → Alice → Bob)', () => {
     // =========================================================================
     //  ROUND 4: Bob → Alice reply (Bob's msgIndex = 2)
     // =========================================================================
-    const r4 = buildReply({
+    const r4 = await buildReply({
       originalPayload: r3Payload,
       replyText: 'Round 4: Doing great, thanks!',
-      myRealNpub: bobMain.publicKey,
-      recipientRealNpub: aliceMain.publicKey,
+      myPrivKey: bobMain.privateKey,
       relayPool: POOL,
       msgIndex: 2,
     })

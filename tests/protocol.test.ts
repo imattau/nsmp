@@ -19,16 +19,15 @@ const RELAY_POOL = [
 ]
 
 describe('sendMessage', () => {
-  it('should produce 3 shards and reply targets', () => {
+  it('should produce 3 shards and reply targets', async () => {
     const senderKey = generateKeypair()
     const recipientKey = generateKeypair()
 
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: recipientKey.publicKey,
       plaintext: 'Hello NSMP!',
       currentRelays: RELAY_POOL.slice(0, 6),
-      myRealNpub: senderKey.publicKey,
-      recipientRealNpub: recipientKey.publicKey,
+      myPrivKey: senderKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -46,47 +45,46 @@ describe('sendMessage', () => {
 })
 
 describe('processEvent', () => {
-  it('should decrypt a shard if recipient has the key', () => {
+  it('should decrypt a shard if recipient has the key', async () => {
     const senderKey = generateKeypair()
     const recipientKey = generateKeypair()
     const relays = RELAY_POOL.slice(0, 6)
 
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: recipientKey.publicKey,
       plaintext: 'Hi there!',
       currentRelays: relays,
-      myRealNpub: senderKey.publicKey,
-      recipientRealNpub: recipientKey.publicKey,
+      myPrivKey: senderKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
     const myKeys = new TempKeyStore()
     myKeys.store(recipientKey)
 
-    const payload = processEvent({
+    const res = processEvent({
       event: result.shardEvents[0].signedEvent,
       myKeys,
     })
 
-    expect(payload).not.toBeNull()
-    expect(payload!.content).toBe('Hi there!')
-    expect(payload!.shard_total).toBe(3)
-    expect(payload!.next_targets).toHaveLength(3)
-    expect(payload!.next_relays).toHaveLength(6)
-    expect(payload!.peer_relays).toHaveLength(6)
-    expect(payload!.conversation_id).toMatch(/^[0-9a-f]{64}$/)
+    expect(res).not.toBeNull()
+    expect(res!.payload.content).toBe('Hi there!')
+    expect(res!.payload.shard_total).toBe(3)
+    expect(res!.payload.next_targets).toHaveLength(3)
+    expect(res!.payload.next_relays).toHaveLength(6)
+    expect(res!.payload.peer_relays).toHaveLength(6)
+    expect(res!.payload.conversation_id).toMatch(/^[0-9a-f]{64}$/)
+    expect(res!.senderPubkey).toBe(senderKey.publicKey)
   })
 
-  it('should return null if recipient does not have the key', () => {
+  it('should return null if recipient does not have the key', async () => {
     const senderKey = generateKeypair()
     const recipientKey = generateKeypair()
 
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: recipientKey.publicKey,
       plaintext: 'Secret',
       currentRelays: RELAY_POOL.slice(0, 6),
-      myRealNpub: senderKey.publicKey,
-      recipientRealNpub: recipientKey.publicKey,
+      myPrivKey: senderKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -103,17 +101,16 @@ describe('processEvent', () => {
 })
 
 describe('buildSyncRequest', () => {
-  it('should produce 3 shards with sync request payload', () => {
+  it('should produce 3 shards with sync request payload', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const relays = RELAY_POOL.slice(0, 6)
 
-    const result = buildSyncRequest({
+    const result = await buildSyncRequest({
       lastSeenIndex: 3,
       recipientCurrentPubkey: bobKey.publicKey,
       currentRelays: relays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
       conversationId: 'abc',
     })
@@ -127,19 +124,19 @@ describe('buildSyncRequest', () => {
     bobKeys.store(bobKey)
 
     for (const shard of result.shardEvents) {
-      const payload = processEvent({ event: shard.signedEvent, myKeys: bobKeys })
-      expect(payload).not.toBeNull()
-      expect(payload!.sync?.type).toBe('request')
-      if (payload!.sync?.type === 'request') {
-        expect(payload!.sync.last_seen_index).toBe(3)
+      const res = processEvent({ event: shard.signedEvent, myKeys: bobKeys })
+      expect(res).not.toBeNull()
+      expect(res!.payload.sync?.type).toBe('request')
+      if (res!.payload.sync?.type === 'request') {
+        expect(res!.payload.sync.last_seen_index).toBe(3)
       }
-      expect(payload!.conversation_id).toBe('abc')
+      expect(res!.payload.conversation_id).toBe('abc')
     }
   })
 })
 
 describe('buildSyncBundle', () => {
-  it('should produce 3 shards with sync bundle payload', () => {
+  it('should produce 3 shards with sync bundle payload', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const relays = RELAY_POOL.slice(0, 6)
@@ -148,12 +145,11 @@ describe('buildSyncBundle', () => {
       { sender_msg_index: 2, content: 'Missed message', timestamp: 1000 },
     ]
 
-    const result = buildSyncBundle({
+    const result = await buildSyncBundle({
       messages,
       recipientCurrentPubkey: bobKey.publicKey,
       currentRelays: relays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
       conversationId: 'abc',
     })
@@ -165,12 +161,12 @@ describe('buildSyncBundle', () => {
     bobKeys.store(bobKey)
 
     for (const shard of result.shardEvents) {
-      const payload = processEvent({ event: shard.signedEvent, myKeys: bobKeys })
-      expect(payload).not.toBeNull()
-      expect(payload!.sync?.type).toBe('bundle')
-      if (payload!.sync?.type === 'bundle') {
-        expect(payload!.sync.messages).toHaveLength(1)
-        expect(payload!.sync.messages[0].content).toBe('Missed message')
+      const res = processEvent({ event: shard.signedEvent, myKeys: bobKeys })
+      expect(res).not.toBeNull()
+      expect(res!.payload.sync?.type).toBe('bundle')
+      if (res!.payload.sync?.type === 'bundle') {
+        expect(res!.payload.sync.messages).toHaveLength(1)
+        expect(res!.payload.sync.messages[0].content).toBe('Missed message')
       }
     }
   })
@@ -190,30 +186,29 @@ describe('edge cases', () => {
     const keys = new TempKeyStore()
     keys.store(generateKeypair())
 
-    const result = processEvent({ event: event as any, myKeys: keys })
-    expect(result).toBeNull()
+    const res = processEvent({ event: event as any, myKeys: keys })
+    expect(res).toBeNull()
   })
 
-  it('processEvent returns null for event with no matching key', () => {
+  it('processEvent returns null for event with no matching key', async () => {
     const senderKey = generateKeypair()
     const recipientKey = generateKeypair()
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: recipientKey.publicKey,
       plaintext: 'test',
       currentRelays: RELAY_POOL.slice(0, 6),
-      myRealNpub: senderKey.publicKey,
-      recipientRealNpub: recipientKey.publicKey,
+      myPrivKey: senderKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
     const wrongKeys = new TempKeyStore()
     wrongKeys.store(generateKeypair()) // different key
 
-    const payload = processEvent({
+    const res = processEvent({
       event: result.shardEvents[0].signedEvent,
       myKeys: wrongKeys,
     })
-    expect(payload).toBeNull()
+    expect(res).toBeNull()
   })
 
   it('processEvent returns null for malformed ciphertext', () => {
@@ -229,27 +224,26 @@ describe('edge cases', () => {
     const keys = new TempKeyStore()
     keys.store({ privateKey: 'f'.repeat(64), publicKey: 'c'.repeat(64) })
 
-    const result = processEvent({ event: event as any, myKeys: keys })
-    expect(result).toBeNull()
+    const res = processEvent({ event: event as any, myKeys: keys })
+    expect(res).toBeNull()
   })
 
-  it('sendMessage with empty content still produces valid shards', () => {
+  it('sendMessage with empty content still produces valid shards', async () => {
     const senderKey = generateKeypair()
     const recipientKey = generateKeypair()
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: recipientKey.publicKey,
       plaintext: '',
       currentRelays: RELAY_POOL.slice(0, 6),
-      myRealNpub: senderKey.publicKey,
-      recipientRealNpub: recipientKey.publicKey,
+      myPrivKey: senderKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
     expect(result.shardEvents).toHaveLength(3)
     const keys = new TempKeyStore()
     keys.store(recipientKey)
-    const payload = processEvent({ event: result.shardEvents[0].signedEvent, myKeys: keys })
-    expect(payload).not.toBeNull()
-    expect(payload!.content).toBe('')
+    const res = processEvent({ event: result.shardEvents[0].signedEvent, myKeys: keys })
+    expect(res).not.toBeNull()
+    expect(res!.payload.content).toBe('')
   })
 })

@@ -22,7 +22,7 @@ const RELAY_POOL = [
 ]
 
 describe('Multi-round accumulation and cleanup on reply', () => {
-  it('accumulates rounds from multiple sends, then cleans up all on any reply', () => {
+  it('accumulates rounds from multiple sends, then cleans up all on any reply', async () => {
     const aliceKey = generateKeypair()
     const bobKey = generateKeypair()
     const currentRelays = RELAY_POOL.slice(0, 6)
@@ -30,28 +30,25 @@ describe('Multi-round accumulation and cleanup on reply', () => {
     // Alice sends 3 messages in succession before Bob replies.
     // All 3 go to Bob's main npub on the same relays, but each
     // embeds its own next_targets and next_relays for the reply.
-    const msg1 = sendMessage({
+    const msg1 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Message 1',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
-    const msg2 = sendMessage({
+    const msg2 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Message 2',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
-    const msg3 = sendMessage({
+    const msg3 = await sendMessage({
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Message 3',
       currentRelays,
-      myRealNpub: aliceKey.publicKey,
-      recipientRealNpub: bobKey.publicKey,
+      myPrivKey: aliceKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -69,23 +66,22 @@ describe('Multi-round accumulation and cleanup on reply', () => {
     const payload1 = processEvent({
       event: msg1.shardEvents[0].signedEvent,
       myKeys: bobKeys,
-    })!
+    })!.payload
     const payload2 = processEvent({
       event: msg2.shardEvents[0].signedEvent,
       myKeys: bobKeys,
-    })!
+    })!.payload
     const payload3 = processEvent({
       event: msg3.shardEvents[0].signedEvent,
       myKeys: bobKeys,
-    })!
+    })!.payload
 
     // Bob replies only to the latest message (Message 3).
     // He uses Message 3's next_targets and next_relays.
-    const reply = buildReply({
+    const reply = await buildReply({
       originalPayload: payload3,
       replyText: 'Reply to latest',
-      myRealNpub: bobKey.publicKey,
-      recipientRealNpub: aliceKey.publicKey,
+      myPrivKey: bobKey.privateKey,
       relayPool: RELAY_POOL,
     })
 
@@ -105,7 +101,7 @@ describe('Multi-round accumulation and cleanup on reply', () => {
       event: reply.shardEvents[0].signedEvent,
       myKeys: aliceKeys,
     })!
-    expect(r.content).toBe('Reply to latest')
+    expect(r.payload.content).toBe('Reply to latest')
 
     // Once a reply is received, all prior messages are assumed delivered.
     // All rounds for this conversation are cleaned up at once.

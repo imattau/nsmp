@@ -26,7 +26,7 @@ function senderPubkeys(events: SignedEvent[]): string[] {
 }
 
 describe('Alice → Bob → Alice full round trip + metadata audit', () => {
-  it('completes two rounds with no metadata leak beyond the first npub', () => {
+  it('completes two rounds with no metadata leak beyond the first npub', async () => {
     // =========================================================================
     //  SETUP
     // =========================================================================
@@ -50,12 +50,11 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     //  ROUND 1: ALICE → BOB
     // =========================================================================
 
-    const round1 = sendMessage({
+    const round1 = await sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'Hello Bob, this is a secret message from Alice!',
       currentRelays: round1Relays,
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
     })
 
@@ -110,32 +109,42 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       }
     }
 
-    // Conversation field (real npubs) is NOT in the visible event
+    // Real npubs do NOT appear in the visible event content (encrypted)
     for (const ev of r1Events) {
       expect(ev.content).not.toContain(aliceMain.publicKey)
       expect(ev.content).not.toContain(bobMain.publicKey)
     }
 
+    // The event's kind is 1059 (Gift Wrap) — the Seal (kind 13) is inside the encrypted content
+    for (const ev of r1Events) {
+      expect(ev.kind).toBe(1059)
+      // The pubkey on the event is a throwaway key, NOT the true author
+      expect(ev.pubkey).not.toBe(aliceMain.publicKey)
+      expect(ev.pubkey).not.toBe(bobMain.publicKey)
+    }
+
     // ---- Bob receives and decrypts Round 1 ----
     for (let i = 0; i < 3; i++) {
-      const payload = processEvent({
+      const res = processEvent({
         event: r1Events[i],
         myKeys: bobKeyStore,
       })
-      expect(payload).not.toBeNull()
-      expect(payload!.content).toBe('Hello Bob, this is a secret message from Alice!')
-      expect(payload!.shard_total).toBe(3)
-      expect(payload!.shard_index).toBe(i + 1)
-      expect(payload!.conversation_id).toBe(conversationId)
+      expect(res).not.toBeNull()
+      expect(res!.payload.content).toBe('Hello Bob, this is a secret message from Alice!')
+      expect(res!.payload.shard_total).toBe(3)
+      expect(res!.payload.shard_index).toBe(i + 1)
+      expect(res!.payload.conversation_id).toBe(conversationId)
+      expect(res!.senderPubkey).toBe(aliceMain.publicKey) // Seal reveals true author
     }
 
     // ---- Bob finds the other 2 shards from any single shard ----
     // Test from each possible starting shard
     for (let startShard = 0; startShard < 3; startShard++) {
-      const firstPayload = processEvent({
+      const firstRes = processEvent({
         event: r1Events[startShard],
         myKeys: bobKeyStore,
       })!
+      const firstPayload = firstRes.payload
 
       const label = r1Events[startShard].tags.find((t) => t[0] === 'shard')?.[1]
       const currentIdx = findShardIndex(label!, firstPayload.shard_labels)!
@@ -155,7 +164,7 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // ---- Bob collects all 3 and verifies consistency ----
     const bobReceived: ShardPayload[] = []
     for (let i = 0; i < 3; i++) {
-      bobReceived.push(processEvent({ event: r1Events[i], myKeys: bobKeyStore })!)
+      bobReceived.push(processEvent({ event: r1Events[i], myKeys: bobKeyStore })!.payload)
     }
     const bobRef = bobReceived[0]
     for (let i = 1; i < 3; i++) {
@@ -181,11 +190,10 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       aliceKeyStore.store(kp)
     }
 
-    const reply1 = buildReply({
+    const reply1 = await buildReply({
       originalPayload: bobPayload,
       replyText: 'Hi Alice! Got your message. This is a secret reply.',
-      myRealNpub: bobMain.publicKey,
-      recipientRealNpub: aliceMain.publicKey,
+      myPrivKey: bobMain.privateKey,
       relayPool: POOL,
     })
 
@@ -244,32 +252,41 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       }
     }
 
-    // Conversation field not in visible content
+    // Real npubs not in visible content (encrypted)
     for (const ev of r2Events) {
       expect(ev.content).not.toContain(aliceMain.publicKey)
       expect(ev.content).not.toContain(bobMain.publicKey)
     }
 
+    // Event kind is 1059 with throwaway pubkey
+    for (const ev of r2Events) {
+      expect(ev.kind).toBe(1059)
+      expect(ev.pubkey).not.toBe(aliceMain.publicKey)
+      expect(ev.pubkey).not.toBe(bobMain.publicKey)
+    }
+
     // ---- Alice receives and decrypts Round 2 (the reply) ----
     for (let i = 0; i < 3; i++) {
-      const payload = processEvent({
+      const res = processEvent({
         event: r2Events[i],
         myKeys: aliceKeyStore,
       })
-      expect(payload).not.toBeNull()
-      expect(payload!.content).toBe('Hi Alice! Got your message. This is a secret reply.')
-      expect(payload!.shard_total).toBe(3)
-      expect(payload!.shard_index).toBe(i + 1)
+      expect(res).not.toBeNull()
+      expect(res!.payload.content).toBe('Hi Alice! Got your message. This is a secret reply.')
+      expect(res!.payload.shard_total).toBe(3)
+      expect(res!.payload.shard_index).toBe(i + 1)
+      expect(res!.senderPubkey).toBe(bobMain.publicKey) // Seal reveals Bob as true author
       // Same conversation_id propagated from round 1
-      expect(payload!.conversation_id).toBe(conversationId)
+      expect(res!.payload.conversation_id).toBe(conversationId)
     }
 
     // ---- Alice finds the other 2 shards from any single shard ----
     for (let startShard = 0; startShard < 3; startShard++) {
-      const firstPayload = processEvent({
+      const firstRes = processEvent({
         event: r2Events[startShard],
         myKeys: aliceKeyStore,
       })!
+      const firstPayload = firstRes.payload
 
       const label = r2Events[startShard].tags.find((t) => t[0] === 'shard')?.[1]
       const currentIdx = findShardIndex(label!, firstPayload.shard_labels)!
@@ -288,7 +305,7 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // ---- Alice collects all 3 reply shards and verifies consistency ----
     const aliceReceived: ShardPayload[] = []
     for (let i = 0; i < 3; i++) {
-      aliceReceived.push(processEvent({ event: r2Events[i], myKeys: aliceKeyStore })!)
+      aliceReceived.push(processEvent({ event: r2Events[i], myKeys: aliceKeyStore })!.payload)
     }
     const aliceRef = aliceReceived[0]
     for (let i = 1; i < 3; i++) {
@@ -348,18 +365,17 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     expect(aliceKeyStore.getAll().length).toBe(1)  // only her main key remains
   })
 
-  it('propagates conversation_id across rounds and allows explicit continuation', () => {
+  it('propagates conversation_id across rounds and allows explicit continuation', async () => {
     const aliceMain = generateKeypair()
     const bobMain = generateKeypair()
     const relays = POOL.slice(0, 6)
 
     // Round 1: auto-generated conversation_id
-    const round1 = sendMessage({
+    const round1 = await sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'First message',
       currentRelays: relays,
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
     })
     expect(round1.conversationId).toMatch(/^[0-9a-f]{64}$/)
@@ -367,18 +383,17 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // Decrypt to verify conversation_id in payload
     const bobKeys = new TempKeyStore()
     bobKeys.store(bobMain)
-    const r1Payload = processEvent({
+    const r1Res = processEvent({
       event: round1.shardEvents[0].signedEvent,
       myKeys: bobKeys,
     })!
-    expect(r1Payload.conversation_id).toBe(round1.conversationId)
+    expect(r1Res.payload.conversation_id).toBe(round1.conversationId)
 
     // Reply propagates the same conversation_id
-    const reply = buildReply({
-      originalPayload: r1Payload,
+    const reply = await buildReply({
+      originalPayload: r1Res.payload,
       replyText: 'Reply with same thread',
-      myRealNpub: bobMain.publicKey,
-      recipientRealNpub: aliceMain.publicKey,
+      myPrivKey: bobMain.privateKey,
       relayPool: POOL,
     })
 
@@ -386,38 +401,36 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     for (const kp of round1.replyTargets) {
       aliceKeys.store(kp)
     }
-    const replyPayload = processEvent({
+    const replyRes = processEvent({
       event: reply.shardEvents[0].signedEvent,
       myKeys: aliceKeys,
     })!
-    expect(replyPayload.conversation_id).toBe(round1.conversationId)
+    expect(replyRes.payload.conversation_id).toBe(round1.conversationId)
 
     // Explicit conversation_id: send to same conversation
-    const round2 = sendMessage({
+    const round2 = await sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'Continuing the conversation',
       currentRelays: POOL.slice(6, 12),
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
       conversationId: round1.conversationId,
     })
 
     expect(round2.conversationId).toBe(round1.conversationId)
 
-    const r2Payload = processEvent({
+    const r2Res = processEvent({
       event: round2.shardEvents[0].signedEvent,
       myKeys: bobKeys,
     })!
-    expect(r2Payload.conversation_id).toBe(round1.conversationId)
+    expect(r2Res.payload.conversation_id).toBe(round1.conversationId)
 
     // Different conversations have different IDs
-    const round3 = sendMessage({
+    const round3 = await sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'New chat',
       currentRelays: POOL.slice(6, 12),
-      myRealNpub: aliceMain.publicKey,
-      recipientRealNpub: bobMain.publicKey,
+      myPrivKey: aliceMain.privateKey,
       relayPool: POOL,
     })
     expect(round3.conversationId).not.toBe(round1.conversationId)

@@ -1,4 +1,5 @@
 import type { KeyPair, ShardPayload, SignedEvent, Subscription, SyncMessage } from './models.js'
+import type { EventSigner } from './shard.js'
 import { TempKeyStore } from './key.js'
 import { sendMessage, buildReply, buildSyncRequest, buildSyncBundle, processEvent, fetchMissingShards } from './protocol.js'
 import { publishEvent, subscribeToPubkey, queryEvents, closePool } from './relay.js'
@@ -14,14 +15,16 @@ export class Client {
   private readonly shardCache: Map<string, Map<number, ShardPayload>> = new Map()
   private readonly pendingFetches: Map<string, ReturnType<typeof setTimeout>> = new Map()
   private readonly firstEvent: Map<string, SignedEvent> = new Map()
+  private readonly firstSenderPubkey: Map<string, string> = new Map()
   private relayPool: string[]
   private relayPoolManager?: RelayPool
   private maintenanceScheduler?: Scheduler
 
   private mainKey: KeyPair
   private myRealNpub: string
-  private onMessageCallback?: (payload: ShardPayload, matchedPubkey: string) => void
+  private onMessageCallback?: (payload: ShardPayload, senderPubkey: string, matchedPubkey: string) => void
   private nip44Decrypt?: (senderPubkey: string, ciphertext: string) => Promise<string>
+  private signEvent?: EventSigner
 
   constructor(mainKey: KeyPair, relayPool?: string[] | RelayPool) {
     this.mainKey = mainKey
@@ -43,12 +46,16 @@ export class Client {
     return this.relayPool
   }
 
-  setMessageCallback(cb: (payload: ShardPayload, matchedPubkey: string) => void): void {
+  setMessageCallback(cb: (payload: ShardPayload, senderPubkey: string, matchedPubkey: string) => void): void {
     this.onMessageCallback = cb
   }
 
   setNip44Decrypt(fn: (senderPubkey: string, ciphertext: string) => Promise<string>): void {
     this.nip44Decrypt = fn
+  }
+
+  setSigner(fn: EventSigner): void {
+    this.signEvent = fn
   }
 
   addRelays(relays: string[]): void {
@@ -81,12 +88,13 @@ export class Client {
       cache.set(p.shard_index, p)
     }
 
+    const senderPubkey = this.firstSenderPubkey.get(cacheKey) ?? ''
     if (cache.size >= 1) {
-      this.completeMessage(cacheKey, cache)
+      this.completeMessage(cacheKey, cache, senderPubkey)
     }
   }
 
-  private completeMessage(cacheKey: string, cache: Map<number, ShardPayload>): void {
+  private completeMessage(cacheKey: string, cache: Map<number, ShardPayload>, senderPubkey: string): void {
     const fullPayload = cache.get(1) ?? cache.get(2) ?? cache.get(3)!
     const firstEvent = this.firstEvent.get(cacheKey)
     const matchedPubkey = firstEvent?.tags.find((t) => t[0] === 'p')?.[1] ?? ''
@@ -95,6 +103,7 @@ export class Client {
 
     this.shardCache.delete(cacheKey)
     this.firstEvent.delete(cacheKey)
+    this.firstSenderPubkey.delete(cacheKey)
 
     const timer = this.pendingFetches.get(cacheKey)
     if (timer) {
@@ -103,7 +112,7 @@ export class Client {
     }
 
     if (this.onMessageCallback) {
-      this.onMessageCallback(fullPayload, matchedPubkey)
+      this.onMessageCallback(fullPayload, senderPubkey, matchedPubkey)
     }
   }
 
@@ -111,25 +120,35 @@ export class Client {
     if (event.kind === 1059) {
       console.warn('handleEvent: got kind 1059 event', event.id.slice(0, 8), 'shard tag:', event.tags.find((t) => t[0] === 'shard')?.[1])
     }
-    let payload = processEvent({ event, myKeys: this.myKeys })
+    let result = processEvent({ event, myKeys: this.myKeys })
 
-    if (!payload && this.nip44Decrypt && this.mainKey.privateKey === '') {
+    if (!result && this.nip44Decrypt && this.mainKey.privateKey === '') {
       try {
         const pTag = event.tags.find((t) => t[0] === 'p')
         if (pTag) {
-          const decrypted = await this.nip44Decrypt(event.pubkey, event.content)
-          payload = JSON.parse(decrypted) as ShardPayload
-          console.warn('nip44 fallback decrypt succeeded for', event.id.slice(0, 8))
+          // Gift Wrap layer: decrypt → Seal (kind 13)
+          const sealJson = await this.nip44Decrypt(event.pubkey, event.content)
+          const seal = JSON.parse(sealJson)
+          if (seal.kind === 13) {
+            // Seal layer: decrypt → Rumor
+            const rumorJson = await this.nip44Decrypt(seal.pubkey, seal.content)
+            const rumor = JSON.parse(rumorJson)
+            const payload = JSON.parse(rumor.content) as ShardPayload
+            result = { payload, senderPubkey: seal.pubkey }
+            console.warn('nip44 fallback decrypt succeeded for', event.id.slice(0, 8))
+          }
         }
       } catch (e) {
         console.warn('nip44 fallback decrypt failed for', event.id.slice(0, 8), e)
       }
     }
 
-    if (!payload) {
+    if (!result) {
       console.warn('processEvent returned null — could not decrypt event', event.id.slice(0, 8))
       return
     }
+
+    const { payload, senderPubkey } = result
 
     const shardLabel = event.tags.find((t) => t[0] === 'shard')?.[1]
     if (!shardLabel) {
@@ -137,10 +156,12 @@ export class Client {
       return
     }
 
-    const cacheKey = `${payload.conversation_id ?? payload.shard_labels['1']}:${payload.shard_labels['1']}`
+    const firstLabel = payload.shard_labels?.['1'] ?? shardLabel
+    const cacheKey = `${payload.conversation_id ?? firstLabel}:${firstLabel}`
     if (!this.shardCache.has(cacheKey)) {
       this.shardCache.set(cacheKey, new Map())
       this.firstEvent.set(cacheKey, event)
+      this.firstSenderPubkey.set(cacheKey, senderPubkey)
 
       this.pendingFetches.set(cacheKey, setTimeout(() => {
         this.tryFetchMissingShards(cacheKey)
@@ -151,7 +172,7 @@ export class Client {
     cache.set(payload.shard_index, payload)
 
     if (cache.size >= 3) {
-      this.completeMessage(cacheKey, cache)
+      this.completeMessage(cacheKey, cache, senderPubkey)
     }
   }
 
@@ -230,11 +251,11 @@ export class Client {
       next_relays: params.peerRelays,
       conversation_id: params.conversationId,
     }
-    const result = buildReply({
+    const result = await buildReply({
       originalPayload: payload as unknown as ShardPayload,
       replyText: params.replyText,
-      myRealNpub: this.myRealNpub,
-      recipientRealNpub: this.myRealNpub,
+      myPrivKey: this.mainKey.privateKey,
+      mySigner: this.signEvent,
       relayPool: this.relayPool,
       msgIndex: params.msgIndex,
     })
@@ -275,18 +296,16 @@ export class Client {
     recipientCurrentPubkey: string
     plaintext: string
     currentRelays?: string[]
-    myRealNpub?: string
-    recipientRealNpub?: string
     conversationId?: string
     msgIndex?: number
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
     const relays = params.currentRelays ?? this.relayPool.slice(0, 6)
-    const result = sendMessage({
+    const result = await sendMessage({
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       plaintext: params.plaintext,
       currentRelays: relays,
-      myRealNpub: params.myRealNpub ?? this.myRealNpub,
-      recipientRealNpub: params.recipientRealNpub ?? params.recipientCurrentPubkey,
+      myPrivKey: this.mainKey.privateKey,
+      mySigner: this.signEvent,
       relayPool: this.relayPool,
       conversationId: params.conversationId,
       msgIndex: params.msgIndex,
@@ -332,12 +351,12 @@ export class Client {
     currentRelays: string[]
     conversationId: string
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
-    const result = buildSyncRequest({
+    const result = await buildSyncRequest({
       lastSeenIndex: params.lastSeenIndex,
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       currentRelays: params.currentRelays,
-      myRealNpub: this.myRealNpub,
-      recipientRealNpub: this.myRealNpub,
+      myPrivKey: this.mainKey.privateKey,
+      mySigner: this.signEvent,
       relayPool: this.relayPool,
       conversationId: params.conversationId,
     })
@@ -370,12 +389,12 @@ export class Client {
     currentRelays: string[]
     conversationId: string
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
-    const result = buildSyncBundle({
+    const result = await buildSyncBundle({
       messages: params.messages,
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       currentRelays: params.currentRelays,
-      myRealNpub: this.myRealNpub,
-      recipientRealNpub: this.myRealNpub,
+      myPrivKey: this.mainKey.privateKey,
+      mySigner: this.signEvent,
       relayPool: this.relayPool,
       conversationId: params.conversationId,
     })
@@ -462,6 +481,7 @@ export class Client {
     this.subscriptions.clear()
     this.shardCache.clear()
     this.firstEvent.clear()
+    this.firstSenderPubkey.clear()
     this.pendingFetches.clear()
     closePool()
   }
