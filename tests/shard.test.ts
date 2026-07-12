@@ -81,6 +81,42 @@ describe('createShards', () => {
   })
 })
 
+describe('buildPayload edge cases', () => {
+  it('should build payload without optional conversation fields', () => {
+    const labels = generateShardLabels()
+    const payload = buildPayload({
+      shardIndex: 2,
+      content: 'no conv',
+      shardLabels: { '1': labels[0], '2': labels[1], '3': labels[2] },
+      peerRelays: ['r1', 'r2'],
+      nextRelays: ['r3', 'r4'],
+      nextTargets: ['t1', 't2'],
+    })
+    expect(payload.shard_index).toBe(2)
+    expect(payload.conversation_id).toBeUndefined()
+    expect(payload.conversation).toBeUndefined()
+  })
+
+  it('should build payload with sync and senderMsgIndex', () => {
+    const labels = generateShardLabels()
+    const payload = buildPayload({
+      shardIndex: 1,
+      content: 'msg',
+      shardLabels: { '1': labels[0], '2': labels[1], '3': labels[2] },
+      peerRelays: ['r1', 'r2'],
+      nextRelays: ['r3', 'r4'],
+      nextTargets: ['t1', 't2'],
+      senderMsgIndex: 5,
+      sync: { type: 'request', last_seen_index: 3 },
+    })
+    expect(payload.sender_msg_index).toBe(5)
+    expect(payload.sync?.type).toBe('request')
+    if (payload.sync?.type === 'request') {
+      expect(payload.sync.last_seen_index).toBe(3)
+    }
+  })
+})
+
 describe('findShardIndex', () => {
   it('should find the correct index for a label', () => {
     const labels = { '1': 'abc12', '2': 'def34', '3': 'ghi56' }

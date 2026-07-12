@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateKeypair, TempKeyStore } from '../src/key.js'
+import { generateKeypair, secretKeyBytes, TempKeyStore } from '../src/key.js'
 
 describe('generateKeypair', () => {
   it('should generate a keypair with hex keys', () => {
@@ -14,6 +14,15 @@ describe('generateKeypair', () => {
     const b = generateKeypair()
     expect(a.privateKey).not.toBe(b.privateKey)
     expect(a.publicKey).not.toBe(b.publicKey)
+  })
+
+  it('secretKeyBytes converts hex to bytes', () => {
+    const kp = generateKeypair()
+    const bytes = secretKeyBytes(kp.privateKey)
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    expect(bytes.length).toBe(32)
+    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('')
+    expect(hex).toBe(kp.privateKey)
   })
 })
 
