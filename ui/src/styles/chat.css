@@ -224,6 +224,11 @@
   gap: 4px;
 }
 
+.message-thread > div {
+  display: flex;
+  flex-direction: column;
+}
+
 .date-separator {
   text-align: center;
   font-size: 12px;
