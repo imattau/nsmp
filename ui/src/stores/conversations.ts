@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals'
 import { saveConversations } from './db.js'
+import { clearConversationRounds } from './pending.js'
 
 export type MessageStatus = 'sending' | 'sent' | 'failed'
 
@@ -134,6 +135,7 @@ export function deleteConversation(id: string): void {
   updated.delete(id)
   conversations.value = updated
   saveConversations(updated)
+  clearConversationRounds(id)
   if (activeConversationId.value === id) {
     activeConversationId.value = updated.size > 0 ? [...updated.keys()][0] : null
   }
