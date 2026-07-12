@@ -91,13 +91,13 @@ Open the dev URL (default `http://localhost:5173`). The PWA supports login via:
 
 ## How it works
 
-1. **Sender** generates a fresh ephemeral keypair, encrypts the message (NIP-44), splits the encrypted payload into 3 shards, and posts each shard to a different pair of relays.
+1. **Sender** generates a fresh signing keypair and 3 reply-target temp npubs. The message is encrypted (NIP-44) and split into 3 shards, each with a unique random label. Each shard is individually encrypted to the **recipient's current pubkey** and posted to 2 different relays — 6 events total across 6 relays. The sender stores the 3 reply-target private keys.
 
-2. **Receiver**, subscribed to their listening key, decrypts any shard they receive. The decrypted payload contains `shard_labels` (to identify the other shards) and `peer_relays` (to know which relays to query).
+2. **Receiver**, subscribed to their listening key, decrypts any shard they receive. The payload contains `shard_labels` (to identify the other shards) and `peer_relays` (to know which relays to query for them).
 
-3. **Receiver** fetches the remaining shards, reassembles the message, and can reply using the `next_targets` and `next_relays` provided in the payload.
+3. **Receiver** fetches the remaining shards and reassembles the message. The payload also contains `next_targets` (3 fresh temp npubs the sender is listening on) and `next_relays` (6 disjoint relays for the reply) — so the receiver can reply without ever knowing the sender's real npub.
 
-4. **All ephemeral keys are destroyed** immediately after each round.
+4. **Temp npubs rotate every round**: when the sender receives a reply on one of their 3 temp npubs, the conversation advances to a new round with fresh keys and relays. All prior-round private keys are destroyed.
 
 ---
 
