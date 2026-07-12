@@ -28,17 +28,19 @@ describe('pool', () => {
     }
   })
 
-  it('chooseNextRelays returns fewer than 6 when pool is small', () => {
+  it('chooseNextRelays returns up to 6 even when pool is small', () => {
     const small = ['wss://r1.com', 'wss://r2.com', 'wss://r3.com']
     const result = chooseNextRelays(['wss://r1.com'], small)
-    expect(result.length).toBe(2)
-    expect(result).not.toContain('wss://r1.com')
+    expect(result.length).toBe(3)
+    // No duplicates
+    expect(new Set(result).size).toBe(result.length)
   })
 
-  it('chooseNextRelays returns empty when no disjoint relays exist', () => {
+  it('chooseNextRelays returns 6 when no disjoint relays exist (reuses from current)', () => {
     const only = ['wss://only.com']
     const result = chooseNextRelays(['wss://only.com'], only)
-    expect(result).toHaveLength(0)
+    expect(result).toHaveLength(1)
+    expect(result).toContain('wss://only.com')
   })
 
   it('shardRelays maps shard index to relay pair', () => {

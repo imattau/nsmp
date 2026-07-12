@@ -3,7 +3,10 @@ import { RelayHealthTracker } from './health.js'
 import { fetchFromTrustedRelays, fetchFromGeorelays, mergeAndDedupe, selectTopRelays } from './discovery.js'
 
 export function chooseNextRelays(currentRelays: string[], pool: string[]): string[] {
-  const available = pool.filter((r) => !currentRelays.includes(r))
+  let available = pool.filter((r) => !currentRelays.includes(r))
+  if (available.length < 6) {
+    available = [...available, ...currentRelays]
+  }
   const shuffled = [...available].sort(() => Math.random() - 0.5)
   return shuffled.slice(0, 6)
 }
