@@ -284,21 +284,25 @@ export class Client {
       msgIndex: params.msgIndex,
     })
 
+    console.warn('send: sending', params.plaintext?.slice(0, 30), 'to', params.recipientCurrentPubkey?.slice(0, 12), 'on relays', relays)
+
     const publishPromises: Promise<void>[] = []
     for (const shard of result.shardEvents) {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
           publishEvent(relayUrl, shard.signedEvent)
-            .then(() => this.recordRelaySuccess(relayUrl))
-            .catch(() => this.recordRelayFailure(relayUrl)),
+            .then(() => { console.warn('  publish OK to', relayUrl); this.recordRelaySuccess(relayUrl) })
+            .catch((e) => { console.warn('  publish FAIL to', relayUrl, e?.message?.slice(0, 50)); this.recordRelayFailure(relayUrl) }),
         )
       }
     }
     const publishResults = await Promise.allSettled(publishPromises)
     const anySuccess = publishResults.some((r) => r.status === 'fulfilled')
     if (!anySuccess) {
+      console.warn('send: ALL publishes failed')
       throw new Error('Failed to publish to any relay')
     }
+    console.warn('send: at least one shard published successfully')
 
     for (const target of result.replyTargets) {
       this.myKeys.store(target)

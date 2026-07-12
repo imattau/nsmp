@@ -194,6 +194,8 @@ export async function sendNSMP(
     const lastIncoming = conv?.messages.filter((m) => !m.isSent).pop()
     const index = nextMsgIndex(cid)
 
+    console.warn('sendNSMP: to', recipientPubkey.slice(0, 12), 'text:', text.slice(0, 30), 'reply?', !!lastIncoming?.peerTargets)
+
     let result: { replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }
     if (lastIncoming?.peerTargets && lastIncoming?.peerRelays) {
       result = await client.sendReply({
