@@ -49,15 +49,15 @@ export function buildPayload(params: {
 
 export function createShards(params: {
   payload: Omit<ShardPayload, 'shard_index'>
-  senderKey: KeyPair
+  senderKeys: [KeyPair, KeyPair, KeyPair]
   recipientPubkey: string
   currentRelays: string[]
 }): ShardEvent[] {
-  const { payload, senderKey, recipientPubkey, currentRelays } = params
+  const { payload, senderKeys, recipientPubkey, currentRelays } = params
   const events: ShardEvent[] = []
-  const skBytes = hexToBytes(senderKey.privateKey)
 
   for (let i = 0; i < 3; i++) {
+    const skBytes = hexToBytes(senderKeys[i].privateKey)
     const fullPayload: ShardPayload = {
       ...payload,
       shard_index: i + 1,
@@ -65,7 +65,7 @@ export function createShards(params: {
 
     const encrypted = encrypt(
       JSON.stringify(fullPayload),
-      senderKey.privateKey,
+      senderKeys[i].privateKey,
       recipientPubkey,
     )
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { generateKeypair } from '../src/key.js'
+import type { KeyPair } from '../src/models.js'
 import {
   generateShardLabels,
   buildPayload,
@@ -44,7 +45,7 @@ describe('buildPayload', () => {
 
 describe('createShards', () => {
   it('should create 3 shard events', () => {
-    const senderKey = generateKeypair()
+    const senderKeys: [KeyPair, KeyPair, KeyPair] = [generateKeypair(), generateKeypair(), generateKeypair()]
     const recipientPubkey = generateKeypair().publicKey
     const labels = generateShardLabels()
     const relays = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
@@ -60,20 +61,23 @@ describe('createShards', () => {
 
     const shards = createShards({
       payload: basePayload,
-      senderKey,
+      senderKeys,
       recipientPubkey,
       currentRelays: relays,
     })
 
     expect(shards).toHaveLength(3)
+    const usedPubkeys = new Set<string>()
     for (let i = 0; i < 3; i++) {
       const shard = shards[i]
       expect(shard.signedEvent.kind).toBe(1059)
-      expect(shard.signedEvent.pubkey).toBe(senderKey.publicKey)
+      expect(shard.signedEvent.pubkey).toBe(senderKeys[i].publicKey)
+      usedPubkeys.add(shard.signedEvent.pubkey)
       expect(shard.signedEvent.tags).toContainEqual(['p', recipientPubkey])
       expect(shard.signedEvent.tags).toContainEqual(['shard', labels[i]])
       expect(shard.relays).toEqual([relays[i * 2], relays[i * 2 + 1]])
     }
+    expect(usedPubkeys.size).toBe(3) // each shard signed by a different key
   })
 })
 

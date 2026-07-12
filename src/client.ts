@@ -1,5 +1,5 @@
 import type { KeyPair, ShardPayload, SignedEvent, Subscription, SyncMessage } from './models.js'
-import { TempKeyStore, generateKeypair } from './key.js'
+import { TempKeyStore } from './key.js'
 import { sendMessage, buildReply, buildSyncRequest, buildSyncBundle, processEvent, fetchMissingShards } from './protocol.js'
 import { publishEvent, subscribeToPubkey, queryEvents, closePool } from './relay.js'
 import { bootstrapRelays } from './pool.js'
@@ -177,7 +177,6 @@ export class Client {
     conversationId: string
     msgIndex?: number
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
-    const senderKey = generateKeypair()
     const payload = {
       next_targets: params.peerTargets,
       next_relays: params.peerRelays,
@@ -186,7 +185,6 @@ export class Client {
     const result = buildReply({
       originalPayload: payload as unknown as ShardPayload,
       replyText: params.replyText,
-      senderKey,
       myRealNpub: this.myRealNpub,
       recipientRealNpub: this.myRealNpub,
       relayPool: this.relayPool,
@@ -229,12 +227,10 @@ export class Client {
     msgIndex?: number
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string }> {
     const relays = params.currentRelays ?? this.relayPool.slice(0, 6)
-    const senderKey = generateKeypair()
     const result = sendMessage({
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       plaintext: params.plaintext,
       currentRelays: relays,
-      senderKey,
       myRealNpub: params.myRealNpub ?? this.myRealNpub,
       recipientRealNpub: params.recipientRealNpub ?? params.recipientCurrentPubkey,
       relayPool: this.relayPool,
@@ -274,12 +270,10 @@ export class Client {
     currentRelays: string[]
     conversationId: string
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
-    const senderKey = generateKeypair()
     const result = buildSyncRequest({
       lastSeenIndex: params.lastSeenIndex,
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       currentRelays: params.currentRelays,
-      senderKey,
       myRealNpub: this.myRealNpub,
       recipientRealNpub: this.myRealNpub,
       relayPool: this.relayPool,
@@ -314,12 +308,10 @@ export class Client {
     currentRelays: string[]
     conversationId: string
   }): Promise<{ replyTargets: KeyPair[]; nextRelays: string[] }> {
-    const senderKey = generateKeypair()
     const result = buildSyncBundle({
       messages: params.messages,
       recipientCurrentPubkey: params.recipientCurrentPubkey,
       currentRelays: params.currentRelays,
-      senderKey,
       myRealNpub: this.myRealNpub,
       recipientRealNpub: this.myRealNpub,
       relayPool: this.relayPool,

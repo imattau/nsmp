@@ -49,13 +49,11 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // =========================================================================
     //  ROUND 1: ALICE → BOB
     // =========================================================================
-    const aliceFreshSender = generateKeypair()  // ephemeral sender key for round 1
 
     const round1 = sendMessage({
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'Hello Bob, this is a secret message from Alice!',
       currentRelays: round1Relays,
-      senderKey: aliceFreshSender,
       myRealNpub: aliceMain.publicKey,
       recipientRealNpub: bobMain.publicKey,
       relayPool: POOL,
@@ -75,10 +73,12 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // ---- Visible metadata inspection (Round 1) ----
     const r1Events = round1.shardEvents.map((s) => s.signedEvent)
 
-    // Sender pubkey is the ephemeral key, NOT Alice's main npub
-    for (const ev of r1Events) {
-      expect(ev.pubkey).toBe(aliceFreshSender.publicKey)
-      expect(ev.pubkey).not.toBe(aliceMain.publicKey)
+    // Sender pubkeys are 3 different ephemeral keys, NOT Alice's main npub
+    const r1SenderPubkeys = senderPubkeys(r1Events)
+    expect(new Set(r1SenderPubkeys).size).toBe(3)  // each shard signed by a different key
+    for (const pk of r1SenderPubkeys) {
+      expect(pk).not.toBe(aliceMain.publicKey)
+      expect(pk).not.toBe(bobMain.publicKey)
     }
     allVisiblePubkeys.push(...senderPubkeys(r1Events))
 
@@ -181,12 +181,9 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       aliceKeyStore.store(kp)
     }
 
-    const bobFreshSender = generateKeypair()  // ephemeral sender key for round 2
-
     const reply1 = buildReply({
       originalPayload: bobPayload,
       replyText: 'Hi Alice! Got your message. This is a secret reply.',
-      senderKey: bobFreshSender,
       myRealNpub: bobMain.publicKey,
       recipientRealNpub: aliceMain.publicKey,
       relayPool: POOL,
@@ -204,13 +201,14 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // ---- Visible metadata inspection (Round 2) ----
     const r2Events = reply1.shardEvents.map((s) => s.signedEvent)
 
-    // Sender pubkey is Bob's ephemeral key, NOT Bob's main npub
-    for (const ev of r2Events) {
-      expect(ev.pubkey).toBe(bobFreshSender.publicKey)
-      expect(ev.pubkey).not.toBe(bobMain.publicKey)
-      expect(ev.pubkey).not.toBe(aliceMain.publicKey)
-      // Also different from round 1's sender
-      expect(ev.pubkey).not.toBe(aliceFreshSender.publicKey)
+    // Sender pubkeys are 3 different ephemeral keys, NOT Bob's main npub
+    const r2SenderPubkeys = senderPubkeys(r2Events)
+    expect(new Set(r2SenderPubkeys).size).toBe(3)  // each shard signed by a different key
+    for (const pk of r2SenderPubkeys) {
+      expect(pk).not.toBe(bobMain.publicKey)
+      expect(pk).not.toBe(aliceMain.publicKey)
+      // Also different from round 1's senders
+      expect(r1SenderPubkeys).not.toContain(pk)
     }
     allVisiblePubkeys.push(...senderPubkeys(r2Events))
 
@@ -323,10 +321,10 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     // 4. All 6 shard labels (3 from each round) are unique — no cross-round linking
     expect(new Set(allShardLabels).size).toBe(6)
 
-    // 5. Sender keys are different between rounds
-    const r1Sender = senderPubkeys(r1Events)
-    const r2Sender = senderPubkeys(r2Events)
-    expect(new Set([...r1Sender, ...r2Sender]).size).toBe(2)  // 2 unique senders
+    // 5. Sender keys are different between rounds — 6 unique total (3 per round)
+    const r1Senders = senderPubkeys(r1Events)
+    const r2Senders = senderPubkeys(r2Events)
+    expect(new Set([...r1Senders, ...r2Senders]).size).toBe(6)
 
     // 6. Relay sets are disjoint between consecutive rounds
     for (const r of round1.nextRelays) {
@@ -360,7 +358,6 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'First message',
       currentRelays: relays,
-      senderKey: generateKeypair(),
       myRealNpub: aliceMain.publicKey,
       recipientRealNpub: bobMain.publicKey,
       relayPool: POOL,
@@ -380,7 +377,6 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
     const reply = buildReply({
       originalPayload: r1Payload,
       replyText: 'Reply with same thread',
-      senderKey: generateKeypair(),
       myRealNpub: bobMain.publicKey,
       recipientRealNpub: aliceMain.publicKey,
       relayPool: POOL,
@@ -401,7 +397,6 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'Continuing the conversation',
       currentRelays: POOL.slice(6, 12),
-      senderKey: generateKeypair(),
       myRealNpub: aliceMain.publicKey,
       recipientRealNpub: bobMain.publicKey,
       relayPool: POOL,
@@ -421,7 +416,6 @@ describe('Alice → Bob → Alice full round trip + metadata audit', () => {
       recipientCurrentPubkey: bobMain.publicKey,
       plaintext: 'New chat',
       currentRelays: POOL.slice(6, 12),
-      senderKey: generateKeypair(),
       myRealNpub: aliceMain.publicKey,
       recipientRealNpub: bobMain.publicKey,
       relayPool: POOL,

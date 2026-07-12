@@ -91,7 +91,9 @@ Open the dev URL (default `http://localhost:5173`). The PWA supports login via:
 
 ## How it works
 
-1. **Sender** generates a fresh signing keypair and 3 reply-target temp npubs. The message is encrypted (NIP-44) and split into 3 shards, each with a unique random label. Each shard is individually encrypted to the **recipient's current pubkey** and posted to 2 different relays — 6 events total across 6 relays. The sender stores the 3 reply-target private keys.
+Every message send generates **6 ephemeral keypairs**: 3 sender keys (one per shard event) and 3 reply-target keys (for the next round).
+
+1. **Sender** generates 3 sender keypairs + 3 reply-target keypairs. The message is encrypted (NIP-44) and split into 3 shards, each with a unique random label. Each shard is encrypted to the **recipient's current pubkey** using a **different sender key** and posted to a different pair of relays — 6 events total across 6 relays, each signed by a distinct key so relays cannot link them. The sender stores the 3 reply-target private keys.
 
 2. **Receiver**, subscribed to their listening key, decrypts any shard they receive. The payload contains `shard_labels` (to identify the other shards) and `peer_relays` (to know which relays to query for them).
 

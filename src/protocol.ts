@@ -18,18 +18,21 @@ function basePayload(payload: ShardPayload): Omit<ShardPayload, 'shard_index'> {
   return rest
 }
 
+function threeSenderKeys(): [KeyPair, KeyPair, KeyPair] {
+  return [generateKeypair(), generateKeypair(), generateKeypair()]
+}
+
 export function sendMessage(params: {
   recipientCurrentPubkey: string
   plaintext: string
   currentRelays: string[]
-  senderKey: KeyPair
   myRealNpub: string
   recipientRealNpub: string
   relayPool: string[]
   conversationId?: string
   msgIndex?: number
 }): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[]; conversationId: string } {
-  const { recipientCurrentPubkey, plaintext, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId: existingId, msgIndex } = params
+  const { recipientCurrentPubkey, plaintext, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId: existingId, msgIndex } = params
 
   const conversationId = existingId ?? generateConversationId()
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
@@ -51,7 +54,7 @@ export function sendMessage(params: {
 
   const shardEvents = createShards({
     payload: basePayload(payload),
-    senderKey,
+    senderKeys: threeSenderKeys(),
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })
@@ -134,13 +137,12 @@ export async function fetchMissingShards(params: {
 export function buildReply(params: {
   originalPayload: ShardPayload
   replyText: string
-  senderKey: KeyPair
   myRealNpub: string
   recipientRealNpub: string
   relayPool: string[]
   msgIndex?: number
 }): { shardEvents: ShardEvent[]; nextTargets: KeyPair[]; nextRelays: string[] } {
-  const { originalPayload, replyText, senderKey, myRealNpub, recipientRealNpub, relayPool, msgIndex } = params
+  const { originalPayload, replyText, myRealNpub, recipientRealNpub, relayPool, msgIndex } = params
 
   const nextTargets = originalPayload.next_targets
   const nextRelays = originalPayload.next_relays
@@ -166,14 +168,15 @@ export function buildReply(params: {
     senderMsgIndex: msgIndex,
   })
 
-  const skBytes = hexToBytes(senderKey.privateKey)
+  const senderKeys = threeSenderKeys()
   const shardEvents: ShardEvent[] = []
   for (let i = 0; i < 3; i++) {
+    const skBytes = hexToBytes(senderKeys[i].privateKey)
     const targetPub = nextTargets[permutation[i]]
     const fullPayload: ShardPayload = { ...basePayload(payload), shard_index: i + 1 }
     const ciphertext = encrypt(
       JSON.stringify(fullPayload),
-      senderKey.privateKey,
+      senderKeys[i].privateKey,
       targetPub,
     )
     const unsignedEvent = {
@@ -200,13 +203,12 @@ export function buildSyncRequest(params: {
   lastSeenIndex: number
   recipientCurrentPubkey: string
   currentRelays: string[]
-  senderKey: KeyPair
   myRealNpub: string
   recipientRealNpub: string
   relayPool: string[]
   conversationId: string
 }): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
-  const { lastSeenIndex, recipientCurrentPubkey, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+  const { lastSeenIndex, recipientCurrentPubkey, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
 
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
   const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
@@ -227,7 +229,7 @@ export function buildSyncRequest(params: {
 
   const shardEvents = createShards({
     payload: basePayload(payload),
-    senderKey,
+    senderKeys: threeSenderKeys(),
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })
@@ -239,13 +241,12 @@ export function buildSyncBundle(params: {
   messages: SyncMessage[]
   recipientCurrentPubkey: string
   currentRelays: string[]
-  senderKey: KeyPair
   myRealNpub: string
   recipientRealNpub: string
   relayPool: string[]
   conversationId: string
 }): { shardEvents: ShardEvent[]; replyTargets: KeyPair[]; nextRelays: string[] } {
-  const { messages, recipientCurrentPubkey, currentRelays, senderKey, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
+  const { messages, recipientCurrentPubkey, currentRelays, myRealNpub, recipientRealNpub, relayPool, conversationId } = params
 
   const replyTargets = [generateKeypair(), generateKeypair(), generateKeypair()]
   const replyTargetsPubs = replyTargets.map((kp) => kp.publicKey)
@@ -266,7 +267,7 @@ export function buildSyncBundle(params: {
 
   const shardEvents = createShards({
     payload: basePayload(payload),
-    senderKey,
+    senderKeys: threeSenderKeys(),
     recipientPubkey: recipientCurrentPubkey,
     currentRelays,
   })

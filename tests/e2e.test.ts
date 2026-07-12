@@ -214,7 +214,6 @@ describe('End-to-end protocol flow', () => {
       recipientCurrentPubkey: bobKey.publicKey,
       plaintext: 'Round 1',
       currentRelays,
-      senderKey: aliceKey,
       myRealNpub: aliceKey.publicKey,
       recipientRealNpub: bobKey.publicKey,
       relayPool: RELAY_POOL,
@@ -231,7 +230,6 @@ describe('End-to-end protocol flow', () => {
     const reply1 = buildReply({
       originalPayload: r1Payload,
       replyText: 'Reply 1',
-      senderKey: bobKey,
       myRealNpub: bobKey.publicKey,
       recipientRealNpub: aliceKey.publicKey,
       relayPool: RELAY_POOL,
@@ -248,7 +246,7 @@ describe('End-to-end protocol flow', () => {
       ...round2Events.map((s) => s.signedEvent.pubkey),
       ...reply2Events.map((s) => s.signedEvent.pubkey),
     ]
-    expect(new Set(allSenderPubkeys).size).toBe(2) // alice and bob (2 different senders)
+    expect(new Set(allSenderPubkeys).size).toBe(6) // 3 alice senders + 3 bob senders
 
     // Reply targets from round 1 are unique and not reused
     const replyTargets = round1.replyTargets
