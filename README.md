@@ -75,6 +75,12 @@ npm run dev     # Vite dev server with HMR
 npm run build   # Production build with PWA service worker
 ```
 
+### Screenshots
+
+| Desktop | Mobile |
+|---------|--------|
+| ![Desktop login](screenshots/login-desktop.png) | ![Mobile login](screenshots/login-mobile.png) |
+
 Open the dev URL (default `http://localhost:5173`). The PWA supports login via:
 
 1. **NIP-07 extension** (nos2x, Alby, etc.)
