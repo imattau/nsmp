@@ -1,13 +1,21 @@
 import { h } from 'preact'
-import { useState, useEffect } from 'preact/hooks'
-import { useComputed } from '@preact/signals'
+import { useState, useEffect, useMemo } from 'preact/hooks'
 import { contacts, contactsLoading, getContactDisplayName, type Contact } from '../stores/contacts.js'
 import { createConversation } from '../stores/conversations.js'
 import { normalizePubkey } from '../auth/utils.js'
 import { Avatar } from './Avatar.js'
+import { npubEncode } from 'nostr-tools/nip19'
 
 interface NewChatDialogProps {
   onClose: () => void
+}
+
+function hexToNpub(hex: string): string {
+  try {
+    return npubEncode(hex)
+  } catch {
+    return ''
+  }
 }
 
 export function NewChatDialog({ onClose }: NewChatDialogProps) {
@@ -17,13 +25,26 @@ export function NewChatDialog({ onClose }: NewChatDialogProps) {
   const [invalid, setInvalid] = useState(false)
   const contactList = contacts
 
-  const filtered = useComputed(() => {
-    const q = search.toLowerCase()
+  const npubCache = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of contactList.value) {
+      map.set(c.pubkey, hexToNpub(c.pubkey))
+    }
+    return map
+  }, [contactList.value])
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    if (!q) return contactList.value
     return contactList.value.filter((c) => {
       const name = getContactDisplayName(c).toLowerCase()
-      return name.includes(q) || c.pubkey.toLowerCase().includes(q)
+      if (name.includes(q)) return true
+      if (c.pubkey.toLowerCase().includes(q)) return true
+      const npub = npubCache.get(c.pubkey)
+      if (npub && npub.includes(q)) return true
+      return false
     })
-  })
+  }, [search, contactList.value, npubCache])
 
   function startChat(pubkey: string, picture?: string) {
     try {
@@ -93,7 +114,7 @@ export function NewChatDialog({ onClose }: NewChatDialogProps) {
             )}
 
             <div class="newchat-list">
-              {filtered.value.map((c) => (
+              {filtered.map((c) => (
                 <div
                   key={c.pubkey}
                   class="newchat-contact"

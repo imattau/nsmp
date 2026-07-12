@@ -386,6 +386,11 @@ export class Client {
       this.relayPool = relays.length >= 6 ? relays : bootstrapRelays()
     })
 
+    this.relayPool = this.relayPoolManager.getRelays()
+    if (this.relayPool.length < 6) {
+      this.relayPool = bootstrapRelays()
+    }
+
     this.maintenanceScheduler.start()
   }
 

@@ -21,6 +21,29 @@ export function saveAuth(method: LoginMethod): void {
 
 export function clearAuth(): void {
   localStorage.removeItem(STORAGE_KEY)
+  clearNsecKey()
+}
+
+const NSEC_SESSION_KEY = 'nsmp-nsec-session'
+
+export function saveNsecKey(hexKey: string): void {
+  try {
+    sessionStorage.setItem(NSEC_SESSION_KEY, hexKey)
+  } catch { }
+}
+
+export function getSavedNsecKey(): string | null {
+  try {
+    return sessionStorage.getItem(NSEC_SESSION_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function clearNsecKey(): void {
+  try {
+    sessionStorage.removeItem(NSEC_SESSION_KEY)
+  } catch { }
 }
 
 export function getSavedAuthMethod(): LoginMethod | null {

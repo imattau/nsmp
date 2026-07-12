@@ -1,11 +1,12 @@
 import { h } from 'preact'
-import { useComputed, useSignalEffect } from '@preact/signals'
-import { useRef } from 'preact/hooks'
-import { conversations, activeConversationId, getActiveThread } from '../stores/conversations.js'
+import { useSignalEffect } from '@preact/signals'
+import { useRef, useState } from 'preact/hooks'
+import { activeConversationId, getActiveThread } from '../stores/conversations.js'
+import type { UIMessage } from '../stores/conversations.js'
 import { MessageBubble } from './MessageBubble.js'
 
-function groupByDate(messages: ReturnType<typeof getActiveThread>) {
-  const groups: { date: string; messages: typeof messages }[] = []
+function groupByDate(messages: UIMessage[]) {
+  const groups: { date: string; messages: UIMessage[] }[] = []
   let current: typeof groups[0] | null = null
 
   for (const msg of messages) {
@@ -23,10 +24,14 @@ function groupByDate(messages: ReturnType<typeof getActiveThread>) {
 export function MessageThread() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeId = activeConversationId
-  const thread = useComputed(() => getActiveThread())
+  const [messages, setMessages] = useState<UIMessage[]>(() => getActiveThread())
 
   useSignalEffect(() => {
-    thread.value // subscribe
+    setMessages(getActiveThread())
+  })
+
+  useSignalEffect(() => {
+    getActiveThread()
     requestAnimationFrame(() => {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     })
@@ -34,7 +39,7 @@ export function MessageThread() {
 
   if (!activeId.value) return null
 
-  const groups = groupByDate(thread.value)
+  const groups = groupByDate(messages)
 
   return (
     <div class="message-thread">
@@ -47,6 +52,7 @@ export function MessageThread() {
               content={msg.content}
               timestamp={msg.timestamp}
               isSent={msg.isSent}
+              status={msg.status}
             />
           ))}
         </div>

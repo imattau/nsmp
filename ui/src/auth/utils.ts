@@ -1,4 +1,5 @@
 import { decode } from 'nostr-tools/nip19'
+import { bytesToHex } from '@noble/hashes/utils.js'
 
 const HEX_RE = /^[0-9a-f]{64}$/i
 
@@ -33,8 +34,8 @@ export function normalizePrivateKey(input: string): string {
   if (trimmed.startsWith('nsec1')) {
     try {
       const decoded = decode(trimmed)
-      if (decoded.type === 'nsec' && typeof decoded.data === 'string') {
-        return decoded.data
+      if (decoded.type === 'nsec') {
+        return bytesToHex(decoded.data)
       }
     } catch {
       // fall through

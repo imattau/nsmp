@@ -12,6 +12,7 @@ import { MessageInput } from '../components/MessageInput.js'
 import { SettingsDrawer } from '../components/SettingsDrawer.js'
 import { NewChatDialog } from '../components/NewChatDialog.js'
 import { bootstrapRelays } from '../../../src/pool.js'
+import { getClient } from '../nsmp/bridge.js'
 
 function isMobile(): boolean {
   return window.innerWidth < 768
@@ -46,7 +47,8 @@ export function ChatPage() {
 
   useEffect(() => {
     if (auth) {
-      fetchContacts(auth.client ? bootstrapRelays() : bootstrapRelays(), auth.pubkey)
+      const relays = auth.client ? auth.client.getRelayPool() : bootstrapRelays()
+      fetchContacts(relays, auth.pubkey)
     }
   }, [auth?.pubkey])
 

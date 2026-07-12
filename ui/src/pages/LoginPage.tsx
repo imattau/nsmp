@@ -2,9 +2,9 @@ import { h } from 'preact'
 import { useState, useEffect, useRef } from 'preact/hooks'
 import { getPublicKey } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
-import { authState, saveAuth } from '../stores/auth.js'
+import { authState, saveAuth, saveNsecKey } from '../stores/auth.js'
 import { isNip07Available, getNip07Extension, waitForNip07 } from '../auth/nip07.js'
-import { isPasskeySupported, registerPasskey, unlockPasskey } from '../auth/passkey.js'
+import { isPasskeySupported, registerPasskey, unlockPasskey, importPasskeyFromNsec } from '../auth/passkey.js'
 import { normalizePrivateKey } from '../auth/utils.js'
 import { startClient } from '../nsmp/bridge.js'
 
@@ -14,6 +14,8 @@ export function LoginPage() {
   const [nsec, setNsec] = useState('')
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showImportInput, setShowImportInput] = useState(false)
+  const [importKey, setImportKey] = useState('')
 
   useEffect(() => {
     // Detect NIP-07 with retry via MutationObserver
@@ -94,6 +96,30 @@ export function LoginPage() {
     }
   }
 
+  async function handleImportPasskey() {
+    const raw = importKey.trim()
+    if (!raw) return
+    setLoading(true)
+    setStatus('Importing key to passkey...')
+    try {
+      const result = await importPasskeyFromNsec(raw)
+      const keypair = { privateKey: result.secretKey, publicKey: result.pubkey }
+      const client = await startClient(keypair)
+
+      authState.value = {
+        pubkey: result.pubkey,
+        npub: result.pubkey,
+        loginMethod: 'passkey',
+        client,
+      }
+      saveAuth('passkey')
+    } catch (e: any) {
+      setStatus(e.message ?? 'Import failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function handleNsecLogin() {
     const raw = nsec.trim()
     if (!raw) return
@@ -101,6 +127,7 @@ export function LoginPage() {
     setStatus('Logging in...')
     try {
       const privkey = normalizePrivateKey(raw)
+      saveNsecKey(privkey)
       const pubkey = getPublicKey(hexToBytes(privkey))
       const keypair = { privateKey: privkey, publicKey: pubkey }
       startClient(keypair).then((client) => {
@@ -167,6 +194,42 @@ export function LoginPage() {
               <small>Generate a new Nostr identity</small>
             </span>
           </button>
+        )}
+
+        {passkey && (
+          <div class="login-import-section">
+            <button
+              class="login-btn"
+              onClick={() => setShowImportInput(!showImportInput)}
+              disabled={loading}
+            >
+              <span class="login-btn-icon">📥</span>
+              <span class="login-btn-label">
+                Import Existing Key
+                <small>Secure an existing nsec with passkey</small>
+              </span>
+            </button>
+
+            {showImportInput && (
+              <div class="login-import-form">
+                <input
+                  class="login-nsec-input"
+                  type="password"
+                  placeholder="nsec1... or hex private key..."
+                  value={importKey}
+                  onInput={(e) => setImportKey((e.target as HTMLInputElement).value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleImportPasskey() }}
+                />
+                <button
+                  class="login-submit-btn"
+                  onClick={handleImportPasskey}
+                  disabled={!importKey.trim() || loading}
+                >
+                  Import
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

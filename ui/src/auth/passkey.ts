@@ -1,4 +1,4 @@
-import { isPRFSupported, unlockPasskeyIdentity, registerPasskeyIdentity } from 'nostr-passkey'
+import { isPRFSupported, unlockPasskeyIdentity, registerPasskeyIdentity, importPasskeyIdentityFromNsec } from 'nostr-passkey'
 import { getPublicKey } from 'nostr-tools'
 
 export async function isPasskeySupported(): Promise<boolean> {
@@ -22,6 +22,16 @@ export async function registerPasskey(): Promise<PasskeyResult> {
 
 export async function unlockPasskey(): Promise<PasskeyResult> {
   const result = await unlockPasskeyIdentity()
+  return {
+    secretKey: result.secretKey as unknown as string,
+    pubkey: result.pubkey,
+  }
+}
+
+export async function importPasskeyFromNsec(nsec: string): Promise<PasskeyResult> {
+  const result = await importPasskeyIdentityFromNsec(nsec, {
+    rpName: 'NSMP Messenger',
+  })
   return {
     secretKey: result.secretKey as unknown as string,
     pubkey: result.pubkey,
