@@ -2,7 +2,9 @@ import type { KeyPair, ShardPayload, SignedEvent, Subscription, SyncMessage } fr
 import { TempKeyStore } from './key.js'
 import { sendMessage, buildReply, buildSyncRequest, buildSyncBundle, processEvent, fetchMissingShards } from './protocol.js'
 import { publishEvent, subscribeToPubkey, queryEvents, closePool } from './relay.js'
-import { bootstrapRelays } from './pool.js'
+import { bootstrapRelays, RelayPool } from './pool.js'
+import { createScheduler } from './scheduler.js'
+import type { Scheduler } from './scheduler.js'
 
 const KIND_NSMP = 1059
 
@@ -13,16 +15,27 @@ export class Client {
   private readonly pendingFetches: Map<string, ReturnType<typeof setTimeout>> = new Map()
   private readonly firstEvent: Map<string, SignedEvent> = new Map()
   private relayPool: string[]
+  private relayPoolManager?: RelayPool
+  private maintenanceScheduler?: Scheduler
 
   private mainKey: KeyPair
   private myRealNpub: string
   private onMessageCallback?: (payload: ShardPayload, matchedPubkey: string) => void
 
-  constructor(mainKey: KeyPair, relayPool?: string[]) {
+  constructor(mainKey: KeyPair, relayPool?: string[] | RelayPool) {
     this.mainKey = mainKey
     this.myKeys.store(mainKey)
     this.myRealNpub = mainKey.publicKey
-    this.relayPool = relayPool ?? bootstrapRelays()
+
+    if (relayPool instanceof RelayPool) {
+      this.relayPoolManager = relayPool
+      this.relayPool = relayPool.getRelays()
+      if (this.relayPool.length === 0) {
+        this.relayPool = bootstrapRelays()
+      }
+    } else {
+      this.relayPool = relayPool ?? bootstrapRelays()
+    }
   }
 
   getRelayPool(): string[] {
@@ -38,6 +51,9 @@ export class Client {
       if (!this.relayPool.includes(r)) {
         this.relayPool.push(r)
       }
+    }
+    if (this.relayPoolManager) {
+      this.relayPoolManager.addRelays(relays)
     }
   }
 
@@ -195,9 +211,9 @@ export class Client {
     for (const shard of result.shardEvents) {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
-          publishEvent(relayUrl, shard.signedEvent).catch(() => {
-            // ignore per-shard publish failures
-          }),
+          publishEvent(relayUrl, shard.signedEvent)
+            .then(() => this.recordRelaySuccess(relayUrl))
+            .catch(() => this.recordRelayFailure(relayUrl)),
         )
       }
     }
@@ -242,9 +258,9 @@ export class Client {
     for (const shard of result.shardEvents) {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
-          publishEvent(relayUrl, shard.signedEvent).catch(() => {
-            // ignore per-shard publish failures
-          }),
+          publishEvent(relayUrl, shard.signedEvent)
+            .then(() => this.recordRelaySuccess(relayUrl))
+            .catch(() => this.recordRelayFailure(relayUrl)),
         )
       }
     }
@@ -284,9 +300,9 @@ export class Client {
     for (const shard of result.shardEvents) {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
-          publishEvent(relayUrl, shard.signedEvent).catch(() => {
-            // ignore per-shard publish failures
-          }),
+          publishEvent(relayUrl, shard.signedEvent)
+            .then(() => this.recordRelaySuccess(relayUrl))
+            .catch(() => this.recordRelayFailure(relayUrl)),
         )
       }
     }
@@ -322,9 +338,9 @@ export class Client {
     for (const shard of result.shardEvents) {
       for (const relayUrl of shard.relays) {
         publishPromises.push(
-          publishEvent(relayUrl, shard.signedEvent).catch(() => {
-            // ignore per-shard publish failures
-          }),
+          publishEvent(relayUrl, shard.signedEvent)
+            .then(() => this.recordRelaySuccess(relayUrl))
+            .catch(() => this.recordRelayFailure(relayUrl)),
         )
       }
     }
@@ -340,6 +356,44 @@ export class Client {
     return { replyTargets: result.replyTargets, nextRelays: result.nextRelays }
   }
 
+  private recordRelaySuccess(url: string): void {
+    this.relayPoolManager?.recordSuccess(url)
+  }
+
+  private recordRelayFailure(url: string): void {
+    this.relayPoolManager?.recordFailure(url)
+  }
+
+  startMaintenance(intervalMs?: number): void {
+    if (!this.relayPoolManager) {
+      this.relayPoolManager = new RelayPool()
+      this.relayPoolManager.addRelays(this.relayPool)
+    }
+    this.relayPoolManager.seed().catch(() => {})
+
+    this.maintenanceScheduler = createScheduler(
+      async () => {
+        await this.relayPoolManager!.refresh()
+        this.relayPool = this.relayPoolManager!.getRelays()
+        if (this.relayPool.length < 6) {
+          this.relayPool = bootstrapRelays()
+        }
+      },
+      intervalMs ?? 1800000,
+    )
+
+    this.relayPoolManager.onPoolUpdate((relays) => {
+      this.relayPool = relays.length >= 6 ? relays : bootstrapRelays()
+    })
+
+    this.maintenanceScheduler.start()
+  }
+
+  stopMaintenance(): void {
+    this.maintenanceScheduler?.stop()
+    this.maintenanceScheduler = undefined
+  }
+
   destroyReplyTargets(pubkeys: string[]): void {
     for (const pubkey of pubkeys) {
       this.myKeys.destroy(pubkey)
@@ -347,6 +401,7 @@ export class Client {
   }
 
   stop(): void {
+    this.stopMaintenance()
     for (const [, sub] of this.subscriptions) {
       sub.close()
     }

@@ -53,3 +53,25 @@ export interface Subscription {
   pubkey: string
   close: () => void
 }
+
+export interface RelayEntry {
+  url: string
+  score: number
+  reliability?: number
+  quality?: number
+  accessibility?: number
+  countryCode?: string
+  software?: string
+  supportedNips?: number[]
+  observations?: number
+  confidence?: 'high' | 'medium' | 'low'
+  isOnline?: boolean
+  lastSeen?: number
+}
+
+export interface RelayPoolConfig {
+  poolSize: number
+  minScore: number
+  refreshIntervalMs: number
+  maxConsecutiveFailures: number
+}

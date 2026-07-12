@@ -10,6 +10,7 @@ import { Command } from 'commander'
 import { generateKeypair, secretKeyBytes } from './key.js'
 import { getPublicKey } from 'nostr-tools'
 import { Client } from './client.js'
+import { RelayPool } from './pool.js'
 
 const program = new Command()
 
@@ -65,13 +66,24 @@ program
   .description('Listen for NSMP messages')
   .requiredOption('-k, --private-key <hex>', 'Your private key')
   .option('-p, --pool <urls>', 'Comma-separated relay pool URLs')
+  .option('--maintenance', 'Enable automatic relay pool maintenance')
   .action(async (opts) => {
     const skBytes = secretKeyBytes(opts.privateKey)
     const keypair = { privateKey: opts.privateKey, publicKey: getPublicKey(skBytes) }
-    const pool = opts.pool
-      ? opts.pool.split(',').map((s: string) => s.trim())
-      : undefined
-    const client = new Client(keypair, pool)
+
+    let client: Client
+    if (opts.maintenance) {
+      const relayPool = new RelayPool()
+      client = new Client(keypair, relayPool)
+      await relayPool.seed()
+      client.startMaintenance()
+      console.log('Relay pool maintenance enabled (refresh every 30m)')
+    } else {
+      const pool = opts.pool
+        ? opts.pool.split(',').map((s: string) => s.trim())
+        : undefined
+      client = new Client(keypair, pool)
+    }
 
     client.setMessageCallback((payload) => {
       console.log('\n=== Message received ===')

@@ -1,11 +1,12 @@
 import { Client } from '../../../src/client.js'
 import type { KeyPair, ShardPayload, SyncMessage } from '../../../src/models.js'
 import { addMessage, updateMessageStatus, setConversationName, conversations } from '../stores/conversations.js'
-import { bootstrapRelays } from '../../../src/pool.js'
+import { bootstrapRelays, RelayPool } from '../../../src/pool.js'
 import { loadPendingRounds, savePendingRound, clearConversationRounds } from '../stores/pending.js'
 
 let client: Client | null = null
 let myPubkey = ''
+let relayWorker: Worker | null = null
 
 const DEDUP_MS = 3000
 
@@ -95,7 +96,12 @@ async function handleSyncBundle(payload: ShardPayload, conversationId: string): 
 
 export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<Client> {
   myPubkey = keypair.publicKey
-  client = new Client(keypair, bootstrapRelays())
+
+  const relayPool = new RelayPool()
+  client = new Client(keypair, relayPool)
+  await relayPool.seed()
+  client.startMaintenance()
+  startRelayWorker()
 
   client.setMessageCallback((payload: ShardPayload, matchedPubkey: string) => {
     const conversationId = payload.conversation_id ?? 'default'
@@ -237,7 +243,40 @@ export async function requestSync(conversationId: string): Promise<void> {
   })
 }
 
+function startRelayWorker(): void {
+  try {
+    const worker = new Worker(
+      new URL('./relay-worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+
+    worker.onmessage = (event) => {
+      if (event.data.type === 'relays' && client) {
+        client.addRelays(event.data.relays)
+      }
+    }
+
+    worker.onerror = (err) => {
+      console.warn('Relay worker error:', err)
+    }
+
+    worker.postMessage({ command: 'start' })
+    relayWorker = worker
+  } catch (err) {
+    console.warn('Web Worker not available, using inline refresh only:', err)
+  }
+}
+
+function stopRelayWorker(): void {
+  if (relayWorker) {
+    relayWorker.postMessage({ command: 'stop' })
+    relayWorker.terminate()
+    relayWorker = null
+  }
+}
+
 export function stopClient(): void {
+  stopRelayWorker()
   client?.stop()
   client = null
 }
