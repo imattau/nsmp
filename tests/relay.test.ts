@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { publishEvent, queryEvents } from '../src/relay.js'
+import { publishEvent, queryEvents, setWebSocketImpl, trustUrlForTesting, closePool } from '../src/relay.js'
 import type { SignedEvent } from '../src/models.js'
 
 function createMockEvent(overrides?: Partial<SignedEvent>): SignedEvent {
@@ -15,15 +15,13 @@ function createMockEvent(overrides?: Partial<SignedEvent>): SignedEvent {
   } as SignedEvent
 }
 
-type WsHandler = ((this: WebSocket, ev: Event) => void) | null
-
 interface MockWebSocket {
   url: string
   readyState: number
-  onopen: WsHandler
-  onclose: WsHandler
-  onerror: WsHandler
-  onmessage: ((this: WebSocket, ev: MessageEvent) => void) | null
+  onopen: ((ev: Event) => void) | null
+  onclose: ((ev: Event) => void) | null
+  onerror: ((ev: Event) => void) | null
+  onmessage: ((ev: MessageEvent) => void) | null
   send: ReturnType<typeof vi.fn>
   close: ReturnType<typeof vi.fn>
   addEventListener: ReturnType<typeof vi.fn>
@@ -34,10 +32,13 @@ interface MockWebSocket {
   _error: () => void
 }
 
-let openHandlers: ((ws: MockWebSocket) => void)[] = []
+let mockWebSocketInstances: MockWebSocket[] = []
 
 function createMockWebSocket(): MockWebSocket {
   const handlers = new Map<string, Set<(...args: any[]) => void>>()
+  function fire(event: string, ...args: any[]) {
+    handlers.get(event)?.forEach((h) => h.call(ws as any, ...args))
+  }
   const ws: MockWebSocket = {
     url: '',
     readyState: 0,
@@ -56,45 +57,41 @@ function createMockWebSocket(): MockWebSocket {
     }),
     _open() {
       ws.readyState = 1
-      handlers.get('open')?.forEach((h) => h.call(ws as any, new Event('open')))
+      fire('open', new Event('open'))
+      ws.onopen?.call(ws as any, new Event('open'))
     },
     _message(data: string) {
-      handlers.get('message')?.forEach((h) => h.call(ws as any, new MessageEvent('message', { data })))
+      fire('message', new MessageEvent('message', { data }))
+      ws.onmessage?.call(ws as any, new MessageEvent('message', { data }))
     },
     _close() {
       ws.readyState = 3
-      handlers.get('close')?.forEach((h) => h.call(ws as any, new Event('close')))
+      fire('close', new Event('close'))
+      ws.onclose?.call(ws as any, new Event('close'))
     },
     _error() {
-      handlers.get('error')?.forEach((h) => h.call(ws as any, new Event('error')))
+      fire('error', new Event('error'))
+      ws.onerror?.call(ws as any, new Event('error'))
     },
   }
-  openHandlers.push((cb) => {
-    ws._open = cb._open
-    ws._message = cb._message
-    ws._close = cb._close
-    ws._error = cb._error
-  })
   return ws
 }
 
-let mockWebSocketInstances: MockWebSocket[] = []
-let origWebSocket: typeof globalThis.WebSocket
-
 beforeEach(() => {
   mockWebSocketInstances = []
-  openHandlers = []
-  origWebSocket = globalThis.WebSocket
-  globalThis.WebSocket = vi.fn().mockImplementation((url: string) => {
+  trustUrlForTesting('wss://relay.example.com')
+  const mockWs = vi.fn().mockImplementation((url: string) => {
     const ws = createMockWebSocket()
     ws.url = url
     mockWebSocketInstances.push(ws)
     return ws
   }) as any
+  setWebSocketImpl(mockWs)
 })
 
 afterEach(() => {
-  globalThis.WebSocket = origWebSocket
+  closePool()
+  setWebSocketImpl(undefined)
 })
 
 describe('publishEvent', () => {
@@ -102,9 +99,15 @@ describe('publishEvent', () => {
     const event = createMockEvent({ id: 'test-id-123' })
     const promise = publishEvent('wss://relay.example.com', event)
 
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances[0]).toBeDefined()
+    })
+
     const ws = mockWebSocketInstances[0]
-    expect(ws).toBeDefined()
     ws._open()
+
+    // Flush microtasks so the pool's send() fires after connection resolves
+    await new Promise((r) => setTimeout(r, 0))
 
     ws._message(JSON.stringify(['OK', 'test-id-123', true]))
 
@@ -116,42 +119,60 @@ describe('publishEvent', () => {
     const event = createMockEvent({ id: 'test-id-456' })
     const promise = publishEvent('wss://relay.example.com', event)
 
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances[0]).toBeDefined()
+    })
+
     const ws = mockWebSocketInstances[0]
     ws._open()
+    await new Promise((r) => setTimeout(r, 0))
     ws._message(JSON.stringify(['OK', 'test-id-456', false, 'blocked']))
 
     await expect(promise).rejects.toThrow('blocked')
   })
 
-  it('should reject on WebSocket error', async () => {
+  it('should handle WebSocket error gracefully', async () => {
     const event = createMockEvent()
     const promise = publishEvent('wss://relay.example.com', event)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances[0]).toBeDefined()
+    })
 
     const ws = mockWebSocketInstances[0]
     ws._error()
 
-    await expect(promise).rejects.toThrow('WebSocket error')
+    // Pool handles connection errors gracefully — doesn't throw
+    await expect(promise).resolves.toBeUndefined()
   })
 })
 
 describe('queryEvents', () => {
   it('should collect events and resolve on EOSE', async () => {
-    // Intercept the REQ message to get the subId
     const reqSend = vi.fn()
-    globalThis.WebSocket = vi.fn().mockImplementation((url: string) => {
+    const mockWs = vi.fn().mockImplementation((url: string) => {
       const ws = createMockWebSocket()
       ws.url = url
       ws.send = reqSend
       mockWebSocketInstances.push(ws)
       return ws
     }) as any
+    setWebSocketImpl(mockWs)
 
     const promise = queryEvents('wss://relay.example.com', { kinds: [1059] })
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances[0]).toBeDefined()
+    })
 
     const ws = mockWebSocketInstances[0]
     ws._open()
 
-    // Extract the generated subId from the REQ message
+    // Flush microtasks so the subscription is created and REQ is sent
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(reqSend.mock.calls.length).toBeGreaterThan(0)
+
     const reqCall = reqSend.mock.calls[0]?.[0]
     const reqParsed = JSON.parse(reqCall)
     const subId = reqParsed[1]
@@ -166,6 +187,10 @@ describe('queryEvents', () => {
 
   it('should timeout and return partial results', async () => {
     const promise = queryEvents('wss://relay.example.com', { kinds: [1059] }, 100)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances[0]).toBeDefined()
+    })
 
     const ws = mockWebSocketInstances[0]
     ws._open()
