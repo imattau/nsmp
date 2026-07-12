@@ -107,6 +107,8 @@ export async function startClient(keypair: KeyPair, nip07Signer?: any): Promise<
     const conversationId = payload.conversation_id ?? 'default'
     const isSent = payload.conversation?.sender === myPubkey
 
+    console.warn('Message received:', { conversationId, isSent, content: payload.content?.slice(0, 30), matchedPubkey: matchedPubkey.slice(0, 12) })
+
     // Handle sync messages
     if (payload.sync) {
       if (payload.sync.type === 'request') {

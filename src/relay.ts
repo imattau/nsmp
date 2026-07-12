@@ -51,6 +51,10 @@ export function subscribeToPubkey(
   return () => sub.close()
 }
 
+export function isPoolReady(url: string): boolean {
+  return pool.listConnectionStatus().get(url) ?? false
+}
+
 export async function queryEvents(
   relayUrl: string,
   filter: Record<string, unknown>,

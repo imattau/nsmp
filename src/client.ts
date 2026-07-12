@@ -86,6 +86,8 @@ export class Client {
     const firstEvent = this.firstEvent.get(cacheKey)
     const matchedPubkey = firstEvent?.tags.find((t) => t[0] === 'p')?.[1] ?? ''
 
+    console.warn('completeMessage: assembled shards', cache.size, 'matchedPubkey', matchedPubkey.slice(0, 12), 'content', fullPayload.content?.slice(0, 30))
+
     this.shardCache.delete(cacheKey)
     this.firstEvent.delete(cacheKey)
 
@@ -102,10 +104,16 @@ export class Client {
 
   private handleEvent(event: SignedEvent): void {
     const payload = processEvent({ event, myKeys: this.myKeys })
-    if (!payload) return
+    if (!payload) {
+      console.warn('processEvent returned null — could not decrypt event', event.id.slice(0, 8))
+      return
+    }
 
     const shardLabel = event.tags.find((t) => t[0] === 'shard')?.[1]
-    if (!shardLabel) return
+    if (!shardLabel) {
+      console.warn('handleEvent: no shard label on event', event.id.slice(0, 8))
+      return
+    }
 
     const cacheKey = `${payload.conversation_id ?? payload.shard_labels['1']}:${payload.shard_labels['1']}`
     if (!this.shardCache.has(cacheKey)) {
